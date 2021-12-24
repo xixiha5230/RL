@@ -92,7 +92,7 @@ def train(agent: Agent, env):
 
     step = -min_env_step
     train_step = 1
-    train_after_step = 50
+    train_after_step = 500
     update_after_tran = 20
 
     total_reward = 0
@@ -149,9 +149,10 @@ def train(agent: Agent, env):
 
 
 if __name__ == "__main__":
+    repla_buffer_size = 100000
     wandb.init(project="dqn", name='cartpol')
     env = gym.make("CartPole-v1")
-    rb = ReplayBuffer()
+    rb = ReplayBuffer(repla_buffer_size)
     model = Model(env.observation_space.shape[0], env.action_space.n, 0.01)
     target_model = Model(env.observation_space.shape[0], env.action_space.n,
                          0.01)
