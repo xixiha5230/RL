@@ -8,6 +8,7 @@ from typing import Any
 from collections import deque
 import random
 import wandb
+from tqdm import tqdm
 
 
 @dataclass
@@ -20,6 +21,7 @@ class Sarsd:
 
 
 class ReplayBuffer():
+
     def __init__(self, buffer_size=100000):
         self.buffer_size = buffer_size
         self.queue = deque(maxlen=self.buffer_size)
@@ -32,6 +34,7 @@ class ReplayBuffer():
 
 
 class ConvModel(nn.Module):
+
     def __init__(self, obs_shape, action_num, learning_rate):
         assert len(obs_shape) == 3  #chanel,height and width
         super(ConvModel, self).__init__()
@@ -58,6 +61,7 @@ class ConvModel(nn.Module):
 
 
 class Agent():
+
     def __init__(self, model: ConvModel, target_model: ConvModel):
         self.model = model
         self.target_model = target_model
@@ -116,6 +120,7 @@ def train(agent: Agent, env):
     export_rate_min = 0.01
     esp = 1
 
+    tq = tqdm()
     try:
         while True:
             step += 1
@@ -142,6 +147,7 @@ def train(agent: Agent, env):
 
             if len(rb.queue) > min_env_step and step % train_after_step == 0:
                 loss = agent.learn(rb.sample(sample_zie))
+                tq.update(1)
                 wandb.log(
                     {
                         "export": esp,
