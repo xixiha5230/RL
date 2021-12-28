@@ -31,28 +31,37 @@ class ReplayBuffer():
         return random.sample(self.queue, sample_num)
 
 
-class Model(nn.Module):
-    def __init__(self, obs_num, action_num, learning_rate):
-        super(Model, self).__init__()
-        self.obs_num = obs_num
+class ConvModel(nn.Module):
+    def __init__(self, obs_shape, action_num, learning_rate):
+        assert len(obs_shape) == 3  #chanel,height and width
+        super(ConvModel, self).__init__()
+        self.obs_shape = obs_shape
         self.action_num = action_num
         self.learning_rate = learning_rate
-        self.net = nn.Sequential(nn.Linear(self.obs_num, 512), nn.ReLU(),
-                                 nn.Linear(512, self.action_num))
-        self.opt = torch.optim.Adam(params=self.net.parameters(),
-                                    lr=self.learning_rate)
+        self.conv_net = torch.nn.Sequential(
+            torch.nn.Conv2d(4, 16, (8, 8), stride=(4, 4)), torch.nn.ReLU(),
+            torch.nn.Conv2d(16, 32, (4, 4), stride=(2, 2)), torch.nn.ReLU())
+        with torch.no_grad():
+            dummy = torch.zeros(1, *self.obs_shape)
+            x = self.conv_net(dummy)
+            s = x.shape
+            fc_size = s[1] * s[2] * s[3]
+        self.fc_net = torch.nn.Sequential(
+            torch.nn.Linear(fc_size, 512), torch.nn.ReLU(),
+            torch.nn.Linear(512, self.action_num))
+        self.opt = torch.optim.Adam(self.fc_net.parameters(), lr=learning_rate)
 
-    # 有这个forward就能直接：model(torch.Tensor(obs))
-    # 不用：model.net(torch.Tensor(obs))
-    # 原因不知道
     def forward(self, x):
-        return self.net(x)
+        conv_x = self.conv_net(x / 255.0)
+        conv_x = conv_x.view((conv_x.shape[0], -1))
+        return self.fc_net(conv_x)
 
 
 class Agent():
-    def __init__(self, model: Model, target_model: Model):
+    def __init__(self, model: ConvModel, target_model: ConvModel):
         self.model = model
         self.target_model = target_model
+        self.loss_fn = torch.nn.SmoothL1Loss()
 
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -77,8 +86,11 @@ class Agent():
         one_hot_action = F.one_hot(torch.LongTensor(act_batch),
                                    self.model.action_num)
         # torch sum 是因为把one_hot乘出来后的0去除，x+0+0
-        loss = ((reward_batch + done_batch[:, 0] * next_action_q -
-                 torch.sum(action_q * one_hot_action, -1))**2).mean()
+        # loss = ((reward_batch + done_batch[:, 0] * next_action_q -
+        #          torch.sum(action_q * one_hot_action, -1))**2).mean()
+        loss = self.loss_fn(
+            torch.sum(action_q * one_hot_action, -1),
+            reward_batch[:, 0] + done_batch[:, 0] * next_action_q)
         loss.backward()
         self.model.opt.step()
         return loss
@@ -112,7 +124,8 @@ def train(agent: Agent, env):
             if random.uniform(0, 1) < esp:
                 action = env.action_space.sample()
             else:
-                action = agent.model(torch.Tensor(obs)).max(-1)[-1].item()
+                action = agent.model(
+                    torch.Tensor(obs).unsqueeze(0)).max(-1)[-1].item()
 
             next_obs, reward, done, _ = env.step(action)
             total_reward += reward
@@ -148,13 +161,15 @@ def train(agent: Agent, env):
         pass
 
 
+from utils import FrameStackingAndResizingEnv
 if __name__ == "__main__":
     repla_buffer_size = 100000
-    wandb.init(project="dqn", name='cartpol')
-    env = gym.make("CartPole-v1")
+    wandb.init(project="dqn", name='break-out')
+    env = gym.make("Breakout-v0")
+    env = FrameStackingAndResizingEnv(env, 84, 84)
     rb = ReplayBuffer(repla_buffer_size)
-    model = Model(env.observation_space.shape[0], env.action_space.n, 0.01)
-    target_model = Model(env.observation_space.shape[0], env.action_space.n,
-                         0.01)
+    model = ConvModel(env.observation_space.shape, env.action_space.n, 0.01)
+    target_model = ConvModel(env.observation_space.shape, env.action_space.n,
+                             0.01)
     agent = Agent(model, target_model)
     train(agent, env)
