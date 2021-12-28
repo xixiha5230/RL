@@ -21,7 +21,6 @@ class Sarsd:
 
 
 class ReplayBuffer():
-
     def __init__(self, buffer_size=100000):
         self.buffer_size = buffer_size
         self.queue = deque(maxlen=self.buffer_size)
@@ -34,7 +33,6 @@ class ReplayBuffer():
 
 
 class ConvModel(nn.Module):
-
     def __init__(self, obs_shape, action_num, learning_rate):
         assert len(obs_shape) == 3  #chanel,height and width
         super(ConvModel, self).__init__()
@@ -61,7 +59,6 @@ class ConvModel(nn.Module):
 
 
 class Agent():
-
     def __init__(self, model: ConvModel, target_model: ConvModel, device):
         self.model = model
         self.target_model = target_model
@@ -177,9 +174,12 @@ if __name__ == "__main__":
     env = gym.make("Breakout-v0")
     env = FrameStackingAndResizingEnv(env, 84, 84)
     rb = ReplayBuffer(repla_buffer_size)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    torch.cuda.set_per_process_memory_fraction(1.0, 0)
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+        torch.cuda.set_per_process_memory_fraction(1.0, 0)
+        torch.cuda.empty_cache()
+    else:
+        device = torch.device("cpu")
     model = ConvModel(env.observation_space.shape, env.action_space.n, 0.01)
     model.to(device)
     target_model = ConvModel(env.observation_space.shape, env.action_space.n,
