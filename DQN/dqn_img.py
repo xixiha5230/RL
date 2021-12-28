@@ -62,24 +62,26 @@ class ConvModel(nn.Module):
 
 class Agent():
 
-    def __init__(self, model: ConvModel, target_model: ConvModel):
+    def __init__(self, model: ConvModel, target_model: ConvModel, device):
         self.model = model
         self.target_model = target_model
         self.loss_fn = torch.nn.SmoothL1Loss()
+        self.device = device
 
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
     def learn(self, batch_data):
-        obs_batch = torch.stack([torch.Tensor(s.obs) for s in batch_data])
+        obs_batch = torch.stack([torch.Tensor(s.obs)
+                                 for s in batch_data]).to(self.device)
         reward_batch = torch.stack(
-            [torch.Tensor([s.reward]) for s in batch_data])
+            [torch.Tensor([s.reward]) for s in batch_data]).to(self.device)
         done_batch = torch.stack([
             torch.Tensor([0]) if s.done else torch.Tensor([1])
             for s in batch_data
-        ])
+        ]).to(self.device)
         next_obs_batch = torch.stack(
-            [torch.Tensor(s.next_obs) for s in batch_data])
+            [torch.Tensor(s.next_obs) for s in batch_data]).to(self.device)
         act_batch = [s.action for s in batch_data]
 
         with torch.no_grad():
@@ -88,7 +90,7 @@ class Agent():
         self.model.opt.zero_grad()
         action_q = self.model(obs_batch)
         one_hot_action = F.one_hot(torch.LongTensor(act_batch),
-                                   self.model.action_num)
+                                   self.model.action_num).to(self.device)
         # torch sum 是因为把one_hot乘出来后的0去除，x+0+0
         # loss = ((reward_batch + done_batch[:, 0] * next_action_q -
         #          torch.sum(action_q * one_hot_action, -1))**2).mean()
@@ -109,14 +111,14 @@ def train(agent: Agent, env):
     step = -min_env_step
     train_step = 1
     train_after_step = 500
-    update_after_tran = 20
+    update_after_tran = 50
 
     total_reward = 0
     reward_batch = []
 
     agent.update_target_model()
 
-    export_rate = 0.99985
+    export_rate = 0.9999
     export_rate_min = 0.01
     esp = 1
 
@@ -130,7 +132,8 @@ def train(agent: Agent, env):
                 action = env.action_space.sample()
             else:
                 action = agent.model(
-                    torch.Tensor(obs).unsqueeze(0)).max(-1)[-1].item()
+                    torch.Tensor(obs).unsqueeze(0).to(
+                        agent.device)).max(-1)[-1].item()
 
             next_obs, reward, done, _ = env.step(action)
             total_reward += reward
@@ -174,8 +177,13 @@ if __name__ == "__main__":
     env = gym.make("Breakout-v0")
     env = FrameStackingAndResizingEnv(env, 84, 84)
     rb = ReplayBuffer(repla_buffer_size)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    torch.cuda.set_per_process_memory_fraction(1.0, 0)
+    torch.cuda.empty_cache()
     model = ConvModel(env.observation_space.shape, env.action_space.n, 0.01)
+    model.to(device)
     target_model = ConvModel(env.observation_space.shape, env.action_space.n,
                              0.01)
-    agent = Agent(model, target_model)
+    target_model.to(device)
+    agent = Agent(model, target_model, device)
     train(agent, env)
