@@ -40,8 +40,9 @@ class ConvModel(nn.Module):
         self.action_num = action_num
         self.learning_rate = learning_rate
         self.conv_net = torch.nn.Sequential(
-            torch.nn.Conv2d(4, 16, (8, 8), stride=(4, 4)), torch.nn.ReLU(),
-            torch.nn.Conv2d(16, 32, (4, 4), stride=(2, 2)), torch.nn.ReLU())
+            torch.nn.Conv2d(4, 32, kernel_size=8, stride=4), torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 64, 4, 2), torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, 3, 1), torch.nn.ReLU())
         with torch.no_grad():
             dummy = torch.zeros(1, *self.obs_shape)
             x = self.conv_net(dummy)
@@ -50,7 +51,7 @@ class ConvModel(nn.Module):
         self.fc_net = torch.nn.Sequential(
             torch.nn.Linear(fc_size, 512), torch.nn.ReLU(),
             torch.nn.Linear(512, self.action_num))
-        self.opt = torch.optim.Adam(self.fc_net.parameters(), lr=learning_rate)
+        self.opt = torch.optim.Adam(self.parameters(), lr=learning_rate)
 
     def forward(self, x):
         conv_x = self.conv_net(x / 255.0)
@@ -64,6 +65,7 @@ class Agent():
         self.target_model = target_model
         self.loss_fn = torch.nn.SmoothL1Loss()
         self.device = device
+        self.gamma = 0.99
 
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -93,7 +95,7 @@ class Agent():
         #          torch.sum(action_q * one_hot_action, -1))**2).mean()
         loss = self.loss_fn(
             torch.sum(action_q * one_hot_action, -1),
-            reward_batch[:, 0] + done_batch[:, 0] * next_action_q)
+            reward_batch[:, 0] + self.gamma * done_batch[:, 0] * next_action_q)
         loss.backward()
         self.model.opt.step()
         return loss
@@ -103,12 +105,12 @@ def train(agent: Agent, env):
     obs = env.reset()
     #环境随机采集数量
     min_env_step = 10000
-    sample_zie = 2500
+    sample_zie = 64
 
     step = -min_env_step
     train_step = 1
-    train_after_step = 500
-    update_after_tran = 50
+    train_after_step = 32
+    update_after_tran = 500
 
     total_reward = 0
     reward_batch = []
@@ -169,7 +171,7 @@ def train(agent: Agent, env):
 
 from utils import FrameStackingAndResizingEnv
 if __name__ == "__main__":
-    repla_buffer_size = 100000
+    repla_buffer_size = 50000
     wandb.init(project="dqn", name='break-out')
     env = gym.make("Breakout-v0")
     env = FrameStackingAndResizingEnv(env, 84, 84)
