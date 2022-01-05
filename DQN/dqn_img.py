@@ -104,20 +104,24 @@ class Agent():
 def train(agent: Agent, env):
     obs = env.reset()
     #环境随机采集数量
-    min_env_step = 10000
-    sample_zie = 64
-
+    min_env_step = 512
+    #一个batch的大小
+    sample_zie = 256
+    #while循环次数（随机采集时候不算）
     step = -min_env_step
+    #训练次数
     train_step = 1
-    train_after_step = 32
-    update_after_tran = 500
+    #while循环几次训练一下
+    train_after_step = 128
+    #更新target网络
+    update_after_tran = 50
 
     total_reward = 0
     reward_batch = []
 
     agent.update_target_model()
 
-    export_rate = 0.9999
+    export_rate = 0.99995
     export_rate_min = 0.01
     esp = 1
 
@@ -161,8 +165,9 @@ def train(agent: Agent, env):
                 train_step += 1
                 if train_step % update_after_tran == 0:
                     agent.update_target_model()
-                    torch.save(agent.target_model,
-                               f'./DQN/model/{train_step}.pth')
+                    if train_step % (train_after_step * 50) == 0:
+                        torch.save(agent.target_model,
+                                   f'./DQN/model/{train_step}.pth')
                     print("update model", train_step)
 
     except KeyboardInterrupt:
@@ -171,7 +176,7 @@ def train(agent: Agent, env):
 
 from utils import FrameStackingAndResizingEnv
 if __name__ == "__main__":
-    repla_buffer_size = 50000
+    repla_buffer_size = 100000
     wandb.init(project="dqn", name='break-out')
     env = gym.make("Breakout-v0")
     env = FrameStackingAndResizingEnv(env, 84, 84)
@@ -182,7 +187,7 @@ if __name__ == "__main__":
         torch.cuda.empty_cache()
     else:
         device = torch.device("cpu")
-    model = ConvModel(env.observation_space.shape, env.action_space.n, 0.01)
+    model = ConvModel(env.observation_space.shape, env.action_space.n, 0.0002)
     model.to(device)
     target_model = ConvModel(env.observation_space.shape, env.action_space.n,
                              0.01)
