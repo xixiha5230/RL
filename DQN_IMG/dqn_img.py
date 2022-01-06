@@ -71,6 +71,7 @@ class Agent():
         self.target_model.load_state_dict(self.model.state_dict())
 
     def learn(self, batch_data):
+        # s a r s'
         obs_batch = torch.stack([torch.Tensor(s.obs)
                                  for s in batch_data]).to(self.device)
         reward_batch = torch.stack(
