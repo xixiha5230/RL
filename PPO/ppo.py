@@ -1,197 +1,230 @@
-import numpy
+from dis import dis
+import imp
+
+import os
+from select import select
+from textwrap import indent
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import gym
-from dataclasses import dataclass
-from typing import Any
-from collections import deque
-import random
-import wandb
-from tqdm import tqdm
+import torch.optim as optim
+from torch.distributions.categorical import Categorical
 
 
-@dataclass
-class Sarsd:
-    obs: Any
-    action: int
-    reward: float
-    next_obs: Any
-    done: bool
+class PPOMemory:
+    def __init__(self, batch_size):
+        self.states = []
+        # real action we took
+        self.actions = []
+        # 预测概率
+        self.probs = []
+        # critic values
+        self.vals = []
+        self.rewards = []
+        self.dones = []
+
+        self.batch_size = batch_size
+
+    def generate_batches(self):
+        num_states = len(self.states)
+        # np.arange生成数组
+        batch_start = np.arange(0, num_states, self.batch_size)
+        indices = np.arange(num_states, dtype=np.int64)
+        np.random.shuffle(indices)
+        batches = [indices[i:i + self.batch_size] for i in batch_start]
+        return np.array(self.states),\
+            np.array(self.actions),\
+            np.array(self.probs), \
+            np.array(self.vals),\
+            np.array(self.rewards),\
+            np.array(self.dones),\
+                batches
+
+    def store_memory(self, state, action, probs, vals, reward, done):
+        self.states.append(state)
+        self.actions.append(action)
+        self.probs.append(probs)
+        self.vals.append(vals)
+        self.rewards.append(reward)
+        self.dones.append(done)
+
+    def clear_memory(self):
+        self.states = []
+        self.actions = []
+        self.probs = []
+        self.vals = []
+        self.rewards = []
+        self.dones = []
 
 
-class ReplayBuffer():
-    def __init__(self, buffer_size=100000):
-        self.buffer_size = buffer_size
-        self.queue = deque(maxlen=self.buffer_size)
+class ActorNetwork(nn.Module):
+    def __init__(self,
+                 num_actions,
+                 input_dims,
+                 lr,
+                 fc1_dims=256,
+                 fc2_dims=256,
+                 chkpt_dir='PPO/model'):
+        super(ActorNetwork, self).__init__()
 
-    def inser(self, sarsd):
-        self.queue.append(sarsd)
+        self.chkpt_file = os.path.join(chkpt_dir, 'actor')
+        self.actor = nn.Sequential(nn.Linear(*input_dims, fc1_dims), nn.ReLU(),
+                                   nn.Linear(fc1_dims, fc2_dims), nn.ReLU(),
+                                   nn.Linear(fc2_dims, num_actions),
+                                   nn.Softmax(dim=-1))
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
-    def sample(self, sample_num):
-        return random.sample(self.queue, sample_num)
+        # self.device = torch.device(
+        #     'cuda:0' if torch.cuda.is_available else 'cpu')
+        self.device = 'cpu'
+        self.to(self.device)
 
+    def forward(self, state):
+        dist = self.actor(state)
+        dist = Categorical(dist)
+        return dist
 
-class ConvModel(nn.Module):
-    def __init__(self, obs_shape, action_num, learning_rate):
-        assert len(obs_shape) == 3  #chanel,height and width
-        super(ConvModel, self).__init__()
-        self.obs_shape = obs_shape
-        self.action_num = action_num
-        self.learning_rate = learning_rate
-        self.conv_net = torch.nn.Sequential(
-            torch.nn.Conv2d(4, 32, kernel_size=8, stride=4), torch.nn.ReLU(),
-            torch.nn.Conv2d(32, 64, 4, 2), torch.nn.ReLU(),
-            torch.nn.Conv2d(64, 64, 3, 1), torch.nn.ReLU())
-        with torch.no_grad():
-            dummy = torch.zeros(1, *self.obs_shape)
-            x = self.conv_net(dummy)
-            s = x.shape
-            fc_size = s[1] * s[2] * s[3]
-        self.fc_net = torch.nn.Sequential(
-            torch.nn.Linear(fc_size, 512), torch.nn.ReLU(),
-            torch.nn.Linear(512, self.action_num))
-        self.opt = torch.optim.Adam(self.parameters(), lr=learning_rate)
+    def save_chkpt(self):
+        torch.save(self.state_dict(), self.chkpt_file)
 
-    def forward(self, x):
-        conv_x = self.conv_net(x / 255.0)
-        conv_x = conv_x.view((conv_x.shape[0], -1))
-        return self.fc_net(conv_x)
+    def load_chkpt(self, chkpt_file):
+        self.load_state_dict(torch.load(chkpt_file))
 
 
-class Agent():
-    def __init__(self, model: ConvModel, target_model: ConvModel, device):
-        self.model = model
-        self.target_model = target_model
-        self.loss_fn = torch.nn.SmoothL1Loss()
-        self.device = device
-        self.gamma = 0.99
+class CriticNetwork(nn.Module):
+    def __init__(self,
+                 input_dims,
+                 lr,
+                 fc1_dims=256,
+                 fc2_dims=256,
+                 chkpt_dir='PPO/model'):
+        super(CriticNetwork, self).__init__()
 
-    def update_target_model(self):
-        self.target_model.load_state_dict(self.model.state_dict())
+        self.chkpt_file = os.path.join(chkpt_dir, 'critic')
+        self.critic = nn.Sequential(nn.Linear(*input_dims, fc1_dims),
+                                    nn.ReLU(), nn.Linear(fc1_dims, fc2_dims),
+                                    nn.ReLU(), nn.Linear(fc2_dims, 1))
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
-    def learn(self, batch_data):
-        # s a r s'
-        obs_batch = torch.stack([torch.Tensor(s.obs)
-                                 for s in batch_data]).to(self.device)
-        reward_batch = torch.stack(
-            [torch.Tensor([s.reward]) for s in batch_data]).to(self.device)
-        done_batch = torch.stack([
-            torch.Tensor([0]) if s.done else torch.Tensor([1])
-            for s in batch_data
-        ]).to(self.device)
-        next_obs_batch = torch.stack(
-            [torch.Tensor(s.next_obs) for s in batch_data]).to(self.device)
-        act_batch = [s.action for s in batch_data]
+        # self.device = torch.device(
+        #     'cuda:0' if torch.cuda.is_available else 'cpu')
+        self.device = 'cpu'
+        self.to(self.device)
 
-        with torch.no_grad():
-            next_action_q = self.target_model(next_obs_batch).max(-1)[0]
+    def forward(self, state):
+        val = self.critic(state)
+        return val
 
-        self.model.opt.zero_grad()
-        action_q = self.model(obs_batch)
-        one_hot_action = F.one_hot(torch.LongTensor(act_batch),
-                                   self.model.action_num).to(self.device)
-        # torch sum 是因为把one_hot乘出来后的0去除，x+0+0
-        # loss = ((reward_batch + done_batch[:, 0] * next_action_q -
-        #          torch.sum(action_q * one_hot_action, -1))**2).mean()
-        loss = self.loss_fn(
-            torch.sum(action_q * one_hot_action, -1),
-            reward_batch[:, 0] + self.gamma * done_batch[:, 0] * next_action_q)
-        loss.backward()
-        self.model.opt.step()
-        return loss
+    def save_chkpt(self):
+        torch.save(self.state_dict(), self.chkpt_file)
+
+    def load_chkpt(self, chkpt_file):
+        self.load_state_dict(torch.load(chkpt_file))
 
 
-def train(agent: Agent, env):
-    obs = env.reset()
-    #环境随机采集数量
-    min_env_step = 512
-    #一个batch的大小
-    sample_zie = 256
-    #while循环次数（随机采集时候不算）
-    step = -min_env_step
-    #训练次数
-    train_step = 1
-    #while循环几次训练一下
-    train_after_step = 128
-    #更新target网络
-    update_after_tran = 50
+class Agent:
+    def __init__(self,
+                 num_action,
+                 input_dims,
+                 gamma=0.99,
+                 lr=0.0003,
+                 gae_lambda=0.95,
+                 policy_clip=0.1,
+                 batch_size=64,
+                 N=2048,
+                 num_epochs=10):
 
-    total_reward = 0
-    reward_batch = []
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.policy_clip = policy_clip
+        self.num_epochs = num_epochs
 
-    agent.update_target_model()
+        self.actor = ActorNetwork(num_action, input_dims, lr)
+        self.critic = CriticNetwork(input_dims, lr)
+        self.memory = PPOMemory(batch_size)
 
-    export_rate = 0.99995
-    export_rate_min = 0.01
-    esp = 1
+    def remember(self, state, action, probs, vals, reward, done):
+        self.memory.store_memory(state, action, probs, vals, reward, done)
 
-    tq = tqdm()
-    try:
-        while True:
-            step += 1
-            if train_step > 0 and esp > export_rate_min:
-                esp = export_rate**train_step
-            if random.uniform(0, 1) < esp:
-                action = env.action_space.sample()
-            else:
-                action = agent.model(
-                    torch.Tensor(obs).unsqueeze(0).to(
-                        agent.device)).max(-1)[-1].item()
+    def save_models(self):
+        print("... saving models ...")
+        self.actor.save_chkpt()
+        self.critic.save_chkpt()
 
-            next_obs, reward, done, _ = env.step(action)
-            total_reward += reward
+    def load_models(self, chkpt_file_actor, chkpt_file_critic):
+        print("... loading models ...")
+        self.actor.load_chkpt(chkpt_file_actor)
+        self.critic.load_chkpt(chkpt_file_critic)
 
-            reward = reward / 100.0
-            rb.inser(Sarsd(obs, action, reward, next_obs, done))
+    def choose_action(self, obs):
+        obs = torch.tensor([obs], dtype=torch.float).to(self.actor.device)
 
-            obs = next_obs
+        dist = self.actor(obs)
+        value = self.critic(obs)
+        action = dist.sample()
 
-            if done:
-                obs = env.reset()
-                reward_batch.append(total_reward)
-                total_reward = 0
+        probs = torch.squeeze(dist.log_prob(action)).item()
+        action = torch.squeeze(action).item()
+        value = torch.squeeze(value).item()
 
-            if len(rb.queue) > min_env_step and step % train_after_step == 0:
-                loss = agent.learn(rb.sample(sample_zie))
-                tq.update(1)
-                wandb.log(
-                    {
-                        "export": esp,
-                        "loss": loss.detach().item(),
-                        "reward": numpy.mean(reward_batch)
-                    },
-                    step=train_step)
-                reward_batch = []
-                train_step += 1
-                if train_step % update_after_tran == 0:
-                    agent.update_target_model()
-                    if train_step % (train_after_step * 50) == 0:
-                        torch.save(agent.target_model,
-                                   f'./DQN/model/{train_step}.pth')
-                    print("update model", train_step)
+        return action, probs, value
 
-    except KeyboardInterrupt:
-        pass
+    def learn(self):
+        for _ in range(self.num_epochs):
+            state_arr, action_arr, old_probs_arr, vals_arr, reward_arr, done_arr, batches = self.memory.generate_batches(
+            )
 
+            values = vals_arr
+            advantage = np.zeros(len(reward_arr), dtype=np.float32)
 
-from utils import FrameStackingAndResizingEnv
-if __name__ == "__main__":
-    repla_buffer_size = 100000
-    wandb.init(project="dqn", name='break-out')
-    env = gym.make("Breakout-v0")
-    env = FrameStackingAndResizingEnv(env, 84, 84)
-    rb = ReplayBuffer(repla_buffer_size)
-    if torch.cuda.is_available():
-        device = torch.device("cuda:0")
-        torch.cuda.set_per_process_memory_fraction(1.0, 0)
-        torch.cuda.empty_cache()
-    else:
-        device = torch.device("cpu")
-    model = ConvModel(env.observation_space.shape, env.action_space.n, 0.0002)
-    model.to(device)
-    target_model = ConvModel(env.observation_space.shape, env.action_space.n,
-                             0.01)
-    target_model.to(device)
-    agent = Agent(model, target_model, device)
-    train(agent, env)
+            # 计算advantage:At，视频在 -> 42:30
+            for t in range(len(reward_arr) - 1):
+                discount = 1
+                a_t = 0
+                for k in range(t, len(reward_arr) - 1):
+                    a_t += discount * (reward_arr[k] +
+                                       self.gamma * values[k + 1] *
+                                       (1 - int(done_arr[k])) - values[k])
+                    discount *= self.gamma * self.gae_lambda
+                advantage[t] = a_t
+            advantage = torch.tensor(advantage).to(self.actor.device)
+
+            values = torch.tensor(values).to(self.actor.device)
+            for batch in batches:
+                states = torch.tensor(state_arr[batch],
+                                      dtype=torch.float).to(self.actor.device)
+                actions = torch.tensor(action_arr[batch]).to(self.actor.device)
+                old_probs = torch.tensor(old_probs_arr[batch]).to(
+                    self.actor.device)
+
+                dist = self.actor(states)
+                critic_val = self.critic(states)
+
+                critic_val = torch.squeeze(critic_val)
+
+                new_probs = dist.log_prob(actions)
+                prob_ratio = new_probs.exp() / old_probs.exp()
+                #prob_ratio = (new_probs / old_probs).exp()
+                weighted_prob = advantage[batch] * prob_ratio
+                weighted_clipped_prob = torch.clamp(
+                    prob_ratio, 1 - self.policy_clip,
+                    1 + self.policy_clip) * advantage[batch]
+
+                actor_loss = -torch.min(weighted_prob,
+                                        weighted_clipped_prob).mean()
+
+                returns = advantage[batch] + values[batch]
+
+                critic_loss = (returns - critic_val)**2
+                critic_loss = critic_loss.mean()
+
+                total_loss = actor_loss + 0.5 * critic_loss
+
+                self.actor.optimizer.zero_grad()
+                self.critic.optimizer.zero_grad()
+
+                total_loss.backward()
+                self.actor.optimizer.step()
+                self.critic.optimizer.step()
+
+        self.memory.clear_memory()
