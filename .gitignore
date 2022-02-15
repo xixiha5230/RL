@@ -1,8 +1,9 @@
+#unity env
+UnityEnv
 # wandb
 wandb
 # model
-*.pth
-model/
+*/model/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
