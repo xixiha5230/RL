@@ -157,7 +157,8 @@ class Agent:
         self.critic.load_chkpt(chkpt_file_critic)
 
     def choose_action(self, obs):
-        obs = torch.tensor([obs], dtype=torch.float).to(self.actor.device)
+        obs = torch.tensor(np.array(obs),
+                           dtype=torch.float).to(self.actor.device)
 
         dist = self.actor(obs)
         value = self.critic(obs)
