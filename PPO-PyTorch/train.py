@@ -63,7 +63,7 @@ def train():
     ###################### logging ######################
 
     #### log files for multiple runs are NOT overwritten
-    log_dir = "PPO_logs"
+    log_dir = "PPO-PyTorch/PPO_logs"
     if not os.path.exists(log_dir):
           os.makedirs(log_dir)
 
@@ -86,7 +86,7 @@ def train():
     ################### checkpointing ###################
     run_num_pretrained = 0      #### change this to prevent overwriting weights in same env_name folder
 
-    directory = "PPO_preTrained"
+    directory = "PPO-PyTorch/PPO_preTrained"
     if not os.path.exists(directory):
           os.makedirs(directory)
 
