@@ -6,6 +6,8 @@ UnityEnv
 wandb
 # model
 */model/
+*/checkpoints/
+*/runs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -77,13 +77,15 @@ class GaussianPolicy(nn.Module):
 
         # action rescaling
         if action_space is None:
-            self.action_scale = torch.tensor(1.)
-            self.action_bias = torch.tensor(0.)
+            self.action_scale = torch.tensor(1.0)
+            self.action_bias = torch.tensor(0.0)
         else:
             self.action_scale = torch.FloatTensor(
-                (action_space.high - action_space.low) / 2.)
+                (action_space.high - action_space.low) / 2.0
+            )
             self.action_bias = torch.FloatTensor(
-                (action_space.high + action_space.low) / 2.)
+                (action_space.high + action_space.low) / 2.0
+            )
 
     def forward(self, state):
         x = F.relu(self.linear1(state))
@@ -126,13 +128,15 @@ class DeterministicPolicy(nn.Module):
 
         # action rescaling
         if action_space is None:
-            self.action_scale = 1.
-            self.action_bias = 0.
+            self.action_scale = 1.0
+            self.action_bias = 0.0
         else:
             self.action_scale = torch.FloatTensor(
-                (action_space.high - action_space.low) / 2.)
+                (action_space.high - action_space.low) / 2.0
+            )
             self.action_bias = torch.FloatTensor(
-                (action_space.high + action_space.low) / 2.)
+                (action_space.high + action_space.low) / 2.0
+            )
 
     def forward(self, state):
         x = F.relu(self.linear1(state))
@@ -142,10 +146,10 @@ class DeterministicPolicy(nn.Module):
 
     def sample(self, state):
         mean = self.forward(state)
-        noise = self.noise.normal_(0., std=0.1)
+        noise = self.noise.normal_(0.0, std=0.1)
         noise = noise.clamp(-0.25, 0.25)
         action = mean + noise
-        return action, torch.tensor(0.), mean
+        return action, torch.tensor(0.0), mean
 
     def to(self, device):
         self.action_scale = self.action_scale.to(device)
