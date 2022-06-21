@@ -1,3 +1,5 @@
+from os import access
+from unicodedata import name
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,45 +36,122 @@ class ValueNetwork(nn.Module):
 
 
 class QNetwork(nn.Module):
-    def __init__(self, num_inputs, num_actions, hidden_dim):
+    """
+    input shape:
+            0       [202]
+            1       [12,128,128]
+    """
+
+    def __init__(self, obs_shapes, num_actions, hidden_dim):
         super(QNetwork, self).__init__()
 
+        self.conv_net1 = torch.nn.Sequential(
+            torch.nn.Conv2d(12, 32, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 64, 4, 2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, 3, 1),
+            torch.nn.ReLU(),
+        )
+
+        self.conv_net2 = torch.nn.Sequential(
+            torch.nn.Conv2d(12, 32, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 64, 4, 2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, 3, 1),
+            torch.nn.ReLU(),
+        )
+
+        # get fc size only
+        with torch.no_grad():
+            for o in obs_shapes:
+                if len(o) == 3:
+                    dummy = torch.zeros(1, *o)
+                    break
+            x = self.conv_net1(dummy)
+            s = x.shape
+            fc_size = s[1] * s[2] * s[3]
+
+        lin_size = 0
+        for o in obs_shapes:
+            if len(o) == 1:
+                lin_size += o[0]
         # Q1 architecture
-        self.linear1 = nn.Linear(num_inputs + num_actions, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
-        self.linear3 = nn.Linear(hidden_dim, 1)
-
+        self.lin_net1 = nn.Sequential(
+            nn.Linear(lin_size + fc_size + num_actions, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
         # Q2 architecture
-        self.linear4 = nn.Linear(num_inputs + num_actions, hidden_dim)
-        self.linear5 = nn.Linear(hidden_dim, hidden_dim)
-        self.linear6 = nn.Linear(hidden_dim, 1)
-
+        self.lin_net2 = nn.Sequential(
+            nn.Linear(lin_size + fc_size + num_actions, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
         self.apply(weights_init_)
 
     def forward(self, state, action):
-        xu = torch.cat([state, action], 1)
+        for s in state:
+            if len(s.shape) > 3:
+                conv_x1 = self.conv_net1(s)
+                conv_x1 = conv_x1.contiguous()
+                conv_x1 = conv_x1.view((conv_x1.shape[0], -1))
+                conv_x2 = self.conv_net1(s)
+                conv_x2 = conv_x2.contiguous()
+                conv_x2 = conv_x2.view((conv_x2.shape[0], -1))
+            else:
+                lin_x = s
+        action = action
+        xu1 = torch.cat([conv_x1, lin_x, action], 1)
+        xu2 = torch.cat([conv_x2, lin_x, action], 1)
+        # xu = torch.cat([state, action], 1)
 
-        x1 = F.relu(self.linear1(xu))
-        x1 = F.relu(self.linear2(x1))
-        x1 = self.linear3(x1)
-
-        x2 = F.relu(self.linear4(xu))
-        x2 = F.relu(self.linear5(x2))
-        x2 = self.linear6(x2)
+        x1 = self.lin_net1(xu1)
+        x2 = self.lin_net2(xu2)
 
         return x1, x2
 
 
 class GaussianPolicy(nn.Module):
-    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
+    def __init__(self, obs_shapes, num_actions, hidden_dim, action_space=None):
         super(GaussianPolicy, self).__init__()
 
-        self.linear1 = nn.Linear(num_inputs, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.conv_net = torch.nn.Sequential(
+            torch.nn.Conv2d(12, 32, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 64, 4, 2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, 3, 1),
+            torch.nn.ReLU(),
+        )
+        # get fc size only
+        with torch.no_grad():
+            for o in obs_shapes:
+                if len(o) == 3:
+                    dummy = torch.zeros(1, *o)
+                    break
+            x = self.conv_net(dummy)
+            s = x.shape
+            fc_size = s[1] * s[2] * s[3]
+        # get input linear size
+        lin_size = 0
+        for o in obs_shapes:
+            if len(o) == 1:
+                lin_size += o[0]
 
+        self.common_net = nn.Sequential(
+            nn.Linear(lin_size + fc_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
         self.mean_linear = nn.Linear(hidden_dim, num_actions)
         self.log_std_linear = nn.Linear(hidden_dim, num_actions)
-
         self.apply(weights_init_)
 
         # action rescaling
@@ -88,8 +167,15 @@ class GaussianPolicy(nn.Module):
             )
 
     def forward(self, state):
-        x = F.relu(self.linear1(state))
-        x = F.relu(self.linear2(x))
+        for s in state:
+            if len(s.shape) > 3:
+                conv_x = self.conv_net(s)
+                conv_x = conv_x.contiguous()
+                conv_x = conv_x.view((conv_x.shape[0], -1))
+            else:
+                lin_x = s
+        x = torch.cat([conv_x, lin_x], 1)
+        x = self.common_net(x)
         mean = self.mean_linear(x)
         log_std = self.log_std_linear(x)
         log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
@@ -116,14 +202,40 @@ class GaussianPolicy(nn.Module):
 
 
 class DeterministicPolicy(nn.Module):
-    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
+    def __init__(self, obs_shapes, num_actions, hidden_dim, action_space=None):
         super(DeterministicPolicy, self).__init__()
-        self.linear1 = nn.Linear(num_inputs, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
 
+        self.conv_net = torch.nn.Sequential(
+            torch.nn.Conv2d(12, 32, kernel_size=8, stride=4),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(32, 64, 4, 2),
+            torch.nn.ReLU(),
+            torch.nn.Conv2d(64, 64, 3, 1),
+            torch.nn.ReLU(),
+        )
+        # get fc size only
+        with torch.no_grad():
+            for o in obs_shapes:
+                if len(o) == 3:
+                    dummy = torch.zeros(1, *o)
+                    break
+            x = self.conv_net(dummy)
+            s = x.shape
+            fc_size = s[1] * s[2] * s[3]
+        # get input linear size
+        lin_size = 0
+        for o in obs_shapes:
+            if len(o) == 1:
+                lin_size += o[0]
+
+        self.common_net = nn.Sequential(
+            nn.Linear(lin_size + fc_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
         self.mean = nn.Linear(hidden_dim, num_actions)
         self.noise = torch.Tensor(num_actions)
-
         self.apply(weights_init_)
 
         # action rescaling
@@ -139,8 +251,15 @@ class DeterministicPolicy(nn.Module):
             )
 
     def forward(self, state):
-        x = F.relu(self.linear1(state))
-        x = F.relu(self.linear2(x))
+        for s in state:
+            if len(s.shape) > 3:
+                conv_x = self.conv_net(s)
+                conv_x = conv_x.contiguous()
+                conv_x = conv_x.view((conv_x.shape[0], -1))
+            else:
+                lin_x = s
+        x = torch.cat([conv_x, lin_x], 1)
+        x = self.common_net(x)
         mean = torch.tanh(self.mean(x)) * self.action_scale + self.action_bias
         return mean
 
@@ -156,3 +275,21 @@ class DeterministicPolicy(nn.Module):
         self.action_bias = self.action_bias.to(device)
         self.noise = self.noise.to(device)
         return super(DeterministicPolicy, self).to(device)
+
+
+if __name__ == "__main__":
+    obs_shapes = [(202,), (12, 128, 128)]
+    action_space = 2
+    critic = QNetwork(obs_shapes, action_space, 512)
+    obs = []
+    obs.append(torch.zeros(1, *obs_shapes[0]))
+    obs.append(torch.zeros(1, *obs_shapes[1]))
+    x1, x2 = critic.forward(obs, [[0, 0]])
+
+    policy = GaussianPolicy(obs_shapes, action_space, 512)
+    x3, x4 = policy(obs)
+    print()
+
+    dpolicy = DeterministicPolicy(obs_shapes, action_space, 512)
+    x5 = dpolicy(obs)
+    print()

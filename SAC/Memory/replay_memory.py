@@ -1,5 +1,10 @@
 import random
 import numpy as np
+import pandas as pd
+import os
+import pickle
+
+# TODO Save buffer
 
 
 class ReplayMemory:
@@ -17,7 +22,25 @@ class ReplayMemory:
 
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
-        state, action, reward, next_state, done = map(np.stack, zip(*batch))
+        state, action, reward, next_state, done = zip(*batch)
+        # state, action, reward, next_state, done = map(np.stack, zip(*batch))
+
+        st = [i for item in state for i in item]
+        nst = [i for item in next_state for i in item]
+        state_num = len(state[0])
+        state = []
+        next_state = []
+        for i in range(state_num):
+            state.append(st[i::state_num])
+            next_state.append(nst[i::state_num])
+
+        for s in state:
+            s = np.stack(s)
+        for s in next_state:
+            s = np.stack(s)
+        action = np.stack(action)
+        reward = np.stack(reward)
+        done = np.stack(done)
         return state, action, reward, next_state, done
 
     def __len__(self):

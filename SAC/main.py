@@ -1,20 +1,23 @@
 import argparse
+from fileinput import filename
 import os
 import glob
 import datetime
+from tkinter.messagebox import NO
 import gym
 import numpy as np
 import itertools
 import torch
-from Algorithm.sac import SAC
 from torch.utils.tensorboard import SummaryWriter
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from Memory.replay_memory import ReplayMemory
+from Algorithm.sac import SAC
+from Envwrapper.UnityEnv import UnityWrapper
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
     "--env-name",
-    default="LunarLander-v2",
+    default="605",
     help="Mujoco Gym environment (default: LunarLander-v2)",
 )
 parser.add_argument(
@@ -72,7 +75,7 @@ parser.add_argument(
     help="random seed (default: 123456)",
 )
 parser.add_argument(
-    "--batch_size", type=int, default=256, metavar="N", help="batch size (default: 256)"
+    "--batch_size", type=int, default=512, metavar="N", help="batch size (default: 256)"
 )
 parser.add_argument(
     "--num_steps",
@@ -119,17 +122,29 @@ parser.add_argument(
 parser.add_argument(
     "--resume", type=bool, default=False, help="Resume training (default: False)"
 )
+parser.add_argument(
+    "--cuda", type=bool, default=True, help="Resume on GPU (default: False)"
+)
 args = parser.parse_args()
 
-# Environment
-# env = NormalizedActions(gym.make(args.env_name))
-env = gym.make(args.env_name, continuous=(args.policy == "Gaussian"))
-
+# Seed
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
+# Environment
+# env = gym.make(args.env_name, continuous=(args.policy == "Gaussian"))
+file_name = "venv_605/"
+env = UnityWrapper(
+    train_mode=True, file_name=file_name, no_graphics=True, seed=args.seed
+)
+obs_shapes, discrete_action_size, continuous_action_size = env.get_size()
+obs_shapes[1] = tuple(reversed(obs_shapes[1]))
 # Agent
-agent = SAC(env.observation_space.shape[0], env.action_space, args)
+if args.policy == "Gaussian":
+    agent = SAC(obs_shapes, continuous_action_size, args)
+else:
+    agent = SAC(obs_shapes, discrete_action_size, args)
+
 if args.resume is True:
     list_of_files = glob.glob(
         os.path.dirname(os.path.abspath(__file__))
@@ -165,7 +180,6 @@ else:
 memory = ReplayMemory(args.replay_size, args.seed)
 
 # Training Loop
-
 total_numsteps = 0
 updates = len(event_acc.Scalars("loss/policy")) if args.resume is True else 0
 i_episode = len(event_acc.Scalars("reward/train")) if args.resume is True else 1
@@ -177,11 +191,23 @@ for i_episode in itertools.count(i_episode):
     episode_reward = 0
     episode_steps = 0
     done = False
-    state = env.reset(seed=args.seed)
+    state = env.reset()
 
     while not done:
         if args.start_steps > total_numsteps and not args.resume is True:
-            action = env.action_space.sample()  # Sample random action
+            # action = env.action_space.sample()  # Sample random action
+            if args.policy == "Gaussian":
+                action = (
+                    torch.distributions.Uniform(-1, 1)
+                    .sample((1, continuous_action_size))
+                    .numpy()
+                )
+            else:
+                action = (
+                    torch.distributions.Uniform(-1, 1)
+                    .sample((1, discrete_action_size))
+                    .numpy()
+                )
         else:
             action = agent.select_action(state)  # Sample action from policy
 
@@ -204,14 +230,20 @@ for i_episode in itertools.count(i_episode):
                 writer.add_scalar("entropy_temprature/alpha", alpha, updates)
                 updates += 1
 
-        next_state, reward, done, _ = env.step(action)  # Step
+        if args.policy == "Gaussian":
+            next_state, reward, done, max_episode_steps = env.step(None, action)  # Step
+        else:
+            next_state, reward, done, max_episode_steps = env.step(action, None)  # Step
+        reward = reward[0]
+        done = done[0]
+        max_episode_steps = max_episode_steps[0]
         episode_steps += 1
         total_numsteps += 1
         episode_reward += reward
 
         # Ignore the "done" signal if it comes from hitting the time horizon.
         # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
-        mask = 1 if episode_steps == env._max_episode_steps else float(not done)
+        mask = 1 if max_episode_steps else float(not done)
 
         memory.push(
             state, action, reward, next_state, mask
@@ -229,16 +261,19 @@ for i_episode in itertools.count(i_episode):
         )
     )
 
-    if i_episode % 10 == 0 and args.eval is True:
+    if i_episode % 20 == 0 and args.eval is True:
         avg_reward = 0.0
-        episodes = 10
+        episodes = 5
         for _ in range(episodes):
             state = env.reset()
             episode_reward = 0
             done = False
             while not done:
                 action = agent.select_action(state, evaluate=True)
-                next_state, reward, done, _ = env.step(action)
+                if args.policy == "Gaussian":
+                    next_state, reward, done, _ = env.step(None, action)  # Step
+                else:
+                    next_state, reward, done, _ = env.step(action, None)  # Step
                 episode_reward += reward
                 state = next_state
             avg_reward += episode_reward

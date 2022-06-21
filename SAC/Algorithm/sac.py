@@ -1,13 +1,16 @@
+from ast import If, arg
 import os
+from re import L
+import numpy
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
-from utils import soft_update, hard_update
-from Network.model import GaussianPolicy, QNetwork, DeterministicPolicy
+from Algorithm.utils import soft_update, hard_update
+from Network.model_unity import GaussianPolicy, QNetwork, DeterministicPolicy
 
 
 class SAC(object):
-    def __init__(self, num_inputs, action_space, args):
+    def __init__(self, obs_shapes, action_space, args):
 
         self.gamma = args.gamma
         self.tau = args.tau
@@ -17,47 +20,54 @@ class SAC(object):
         self.target_update_interval = args.target_update_interval
         self.automatic_entropy_tuning = args.automatic_entropy_tuning
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(
+            "cuda" if args.cuda == True and torch.cuda.is_available() else "cpu"
+        )
 
-        self.critic = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(
+        self.critic = QNetwork(obs_shapes, action_space, args.hidden_size).to(
             device=self.device
         )
         self.critic_optim = Adam(self.critic.parameters(), lr=args.lr)
 
-        self.critic_target = QNetwork(
-            num_inputs, action_space.shape[0], args.hidden_size
-        ).to(self.device)
+        self.critic_target = QNetwork(obs_shapes, action_space, args.hidden_size).to(
+            self.device
+        )
         hard_update(self.critic_target, self.critic)
 
         if self.policy_type == "Gaussian":
             # Target Entropy = −dim(A) (e.g. , -6 for HalfCheetah-v2) as given in the paper
             if self.automatic_entropy_tuning is True:
                 self.target_entropy = -torch.prod(
-                    torch.Tensor(action_space.shape).to(self.device)
+                    torch.Tensor(action_space).to(self.device)
                 ).item()
                 self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
                 self.alpha_optim = Adam([self.log_alpha], lr=args.lr)
 
             self.policy = GaussianPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
+                obs_shapes, action_space, args.hidden_size, None
             ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
-
         else:
             self.alpha = 0
             self.automatic_entropy_tuning = False
             self.policy = DeterministicPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
+                obs_shapes, action_space, args.hidden_size, None
             ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
     def select_action(self, state, evaluate=False):
-        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+        for i in range(len(state)):
+            state[i] = torch.FloatTensor(numpy.array(state[i])).to(self.device)
+            if len(state[i].shape) > 3:
+                state[i] = state[i].transpose(2, 3).transpose(1, 2)
+
         if evaluate is False:
             action, _, _ = self.policy.sample(state)
         else:
             _, _, action = self.policy.sample(state)
-        return action.detach().cpu().numpy()[0]
+
+        action = action.detach().cpu().numpy()
+        return action
 
     def update_parameters(self, memory, batch_size, updates):
         # Sample a batch from memory
@@ -69,9 +79,26 @@ class SAC(object):
             mask_batch,
         ) = memory.sample(batch_size=batch_size)
 
-        state_batch = torch.FloatTensor(state_batch).to(self.device)
-        next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
-        action_batch = torch.FloatTensor(action_batch).to(self.device)
+        for i in range(len(state_batch)):
+            state_batch[i] = (
+                torch.FloatTensor(numpy.array(state_batch[i]))
+                .squeeze(1)
+                .to(self.device)
+            )
+            if len(state_batch[i].shape) > 3:
+                state_batch[i] = state_batch[i].transpose(2, 3).transpose(1, 2)
+            next_state_batch[i] = (
+                torch.FloatTensor(numpy.array(next_state_batch[i]))
+                .squeeze(1)
+                .to(self.device)
+            )
+            if len(next_state_batch[i].shape) > 3:
+                next_state_batch[i] = (
+                    next_state_batch[i].transpose(2, 3).transpose(1, 2)
+                )
+        # state_batch = torch.FloatTensor(state_batch).to(self.device)
+        # next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
+        action_batch = torch.FloatTensor(action_batch).squeeze(1).to(self.device)
         reward_batch = torch.FloatTensor(reward_batch).to(self.device).unsqueeze(1)
         mask_batch = torch.FloatTensor(mask_batch).to(self.device).unsqueeze(1)
 

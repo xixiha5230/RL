@@ -116,8 +116,8 @@ class UnityWrapper:
         returns:
             observations: list[(NAgents, o1), (NAgents, o2), (NAgents, o3_1, o3_2, o3_3)]
             rewards: (NAgents, )
-            done: (NAgents, ), np.bool
-            max_step: (NAgents, ), np.bool
+            done: (NAgents, ), bool
+            max_step: (NAgents, ), bool
         """
         if self.d_action_size != 0:
             d_action = np.argmax(d_action, axis=1)
@@ -154,7 +154,7 @@ class UnityWrapper:
                 len(decision_steps),
             ],
             False,
-            dtype=np.bool,
+            dtype=bool,
         )
         done[tmp_terminal_steps.agent_id] = True
 
@@ -163,7 +163,7 @@ class UnityWrapper:
                 len(decision_steps),
             ],
             False,
-            dtype=np.bool,
+            dtype=bool,
         )
         max_step[tmp_terminal_steps.agent_id] = tmp_terminal_steps.interrupted
 
