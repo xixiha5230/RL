@@ -3,7 +3,7 @@ import os
 from time import sleep
 import gym
 import glob
-from sac import SAC
+from Algorithm.sac import SAC
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(

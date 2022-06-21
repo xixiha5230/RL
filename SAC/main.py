@@ -2,15 +2,14 @@ import argparse
 import os
 import glob
 import datetime
-from pickle import TRUE
 import gym
 import numpy as np
 import itertools
 import torch
-from sac import SAC
+from Algorithm.sac import SAC
 from torch.utils.tensorboard import SummaryWriter
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-from replay_memory import ReplayMemory
+from Memory.replay_memory import ReplayMemory
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
@@ -118,7 +117,7 @@ parser.add_argument(
     help="size of replay buffer (default: 10000000)",
 )
 parser.add_argument(
-    "--resume", type=bool, default=True, help="Resume training (default: False)"
+    "--resume", type=bool, default=False, help="Resume training (default: False)"
 )
 args = parser.parse_args()
 
@@ -131,7 +130,7 @@ np.random.seed(args.seed)
 
 # Agent
 agent = SAC(env.observation_space.shape[0], env.action_space, args)
-if args.resume:
+if args.resume is True:
     list_of_files = glob.glob(
         os.path.dirname(os.path.abspath(__file__))
         + "/checkpoints/"
@@ -143,7 +142,7 @@ if args.resume:
     agent.load_checkpoint(latest_file)
 
 # Tesnorboard
-if args.resume:
+if args.resume is True:
     files = glob.glob(
         os.path.dirname(os.path.abspath(__file__)) + "/runs/" + args.env_name + "/*"
     )
@@ -151,7 +150,6 @@ if args.resume:
     writer = SummaryWriter(path)
     event_acc = EventAccumulator(path, size_guidance={"scalars": 0})
     event_acc.Reload()
-
 else:
     writer = SummaryWriter(
         os.path.dirname(os.path.abspath(__file__))
@@ -169,9 +167,11 @@ memory = ReplayMemory(args.replay_size, args.seed)
 # Training Loop
 
 total_numsteps = 0
-updates = len(event_acc.Scalars("loss/policy")) if args.resume else 0
-i_episode = len(event_acc.Scalars("reward/train")) if args.resume else 0
-last_avg_reward = float(latest_file.split("_")[-1]) if args.resume else float("-inf")
+updates = len(event_acc.Scalars("loss/policy")) if args.resume is True else 0
+i_episode = len(event_acc.Scalars("reward/train")) if args.resume is True else 1
+latest_avg_reward = (
+    float(latest_file.split("_")[-1]) if args.resume is True else float("-inf")
+)
 
 for i_episode in itertools.count(i_episode):
     episode_reward = 0
@@ -180,7 +180,7 @@ for i_episode in itertools.count(i_episode):
     state = env.reset(seed=args.seed)
 
     while not done:
-        if args.start_steps > total_numsteps and not args.resume:
+        if args.start_steps > total_numsteps and not args.resume is True:
             action = env.action_space.sample()  # Sample random action
         else:
             action = agent.select_action(state)  # Sample action from policy
@@ -251,8 +251,9 @@ for i_episode in itertools.count(i_episode):
             "Test Episodes: {}, Avg. Reward: {}".format(episodes, round(avg_reward, 2))
         )
         print("----------------------------------------")
-        if last_avg_reward < avg_reward or i_episode % 100 == 0:
+        if latest_avg_reward < avg_reward or i_episode % 100 == 0:
             agent.save_checkpoint(args.env_name, avg_reward)
-            last_avg_reward = avg_reward
+            if latest_avg_reward < avg_reward:
+                latest_avg_reward = avg_reward
 
 env.close()
