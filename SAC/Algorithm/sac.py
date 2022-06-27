@@ -56,11 +56,13 @@ class SAC(object):
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
     def select_action(self, state, evaluate=False):
-        for i in range(len(state)):
-            state[i] = torch.FloatTensor(numpy.array(state[i])).to(self.device)
-            if len(state[i].shape) > 3:
-                state[i] = state[i].transpose(2, 3).transpose(1, 2)
-
+        nst = []
+        for s in state:
+            t = torch.FloatTensor(numpy.array(s)).to(self.device)
+            if len(t.shape) > 3:
+                t = t.transpose(2, 3).transpose(1, 2)
+            nst.append(t)
+        state = nst
         if evaluate is False:
             action, _, _ = self.policy.sample(state)
         else:
@@ -98,10 +100,15 @@ class SAC(object):
                 )
         # state_batch = torch.FloatTensor(state_batch).to(self.device)
         # next_state_batch = torch.FloatTensor(next_state_batch).to(self.device)
-        action_batch = torch.FloatTensor(action_batch).squeeze(1).to(self.device)
-        reward_batch = torch.FloatTensor(reward_batch).to(self.device).unsqueeze(1)
-        mask_batch = torch.FloatTensor(mask_batch).to(self.device).unsqueeze(1)
-
+        action_batch = (
+            torch.FloatTensor(numpy.array(action_batch)).squeeze(1).to(self.device)
+        )
+        reward_batch = (
+            torch.FloatTensor(numpy.array(reward_batch)).to(self.device).unsqueeze(1)
+        )
+        mask_batch = (
+            torch.FloatTensor(numpy.array(mask_batch)).to(self.device).unsqueeze(1)
+        )
         with torch.no_grad():
             next_state_action, next_state_log_pi, _ = self.policy.sample(
                 next_state_batch
@@ -166,13 +173,18 @@ class SAC(object):
 
     # Save model parameters
     def save_checkpoint(self, env_name, suffix="", ckpt_path=None):
-        path = os.path.dirname(os.path.abspath(__file__))
-        if not os.path.exists(path + "/checkpoints/" + env_name):
-            os.makedirs(path + "/checkpoints/" + env_name)
         if ckpt_path is None:
+            path = os.path.dirname(os.path.abspath(__file__))
+            if not os.path.exists(path + "/checkpoints/" + env_name):
+                os.makedirs(path + "/checkpoints/" + env_name)
             ckpt_path = path + "/checkpoints/{}/sac_checkpoint_{}".format(
                 env_name, suffix
             )
+        else:
+            ckpt_path += "/checkpoints/" + env_name
+            if not os.path.exists(ckpt_path):
+                os.makedirs(ckpt_path)
+            ckpt_path += "/sac_checkpoint_{}".format(suffix)
         print("Saving models to {}".format(ckpt_path))
         torch.save(
             {

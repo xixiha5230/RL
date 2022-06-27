@@ -1,10 +1,7 @@
 import argparse
-from fileinput import filename
 import os
 import glob
 import datetime
-from tkinter.messagebox import NO
-import gym
 import numpy as np
 import itertools
 import torch
@@ -75,7 +72,7 @@ parser.add_argument(
     help="random seed (default: 123456)",
 )
 parser.add_argument(
-    "--batch_size", type=int, default=512, metavar="N", help="batch size (default: 256)"
+    "--batch_size", type=int, default=256, metavar="N", help="batch size (default: 256)"
 )
 parser.add_argument(
     "--num_steps",
@@ -94,28 +91,28 @@ parser.add_argument(
 parser.add_argument(
     "--updates_per_step",
     type=int,
-    default=1,
+    default=5,
     metavar="N",
     help="model updates per simulator step (default: 1)",
 )
 parser.add_argument(
     "--start_steps",
     type=int,
-    default=10000,
+    default=1024,
     metavar="N",
     help="Steps sampling random actions (default: 10000)",
 )
 parser.add_argument(
     "--target_update_interval",
     type=int,
-    default=1,
+    default=5,
     metavar="N",
     help="Value target update per no. of updates per step (default: 1)",
 )
 parser.add_argument(
     "--replay_size",
     type=int,
-    default=1000000,
+    default=50000,
     metavar="N",
     help="size of replay buffer (default: 10000000)",
 )
@@ -135,7 +132,7 @@ np.random.seed(args.seed)
 # env = gym.make(args.env_name, continuous=(args.policy == "Gaussian"))
 file_name = "venv_605/"
 env = UnityWrapper(
-    train_mode=True, file_name=file_name, no_graphics=True, seed=args.seed
+    train_mode=True, file_name=file_name, no_graphics=False, seed=args.seed
 )
 obs_shapes, discrete_action_size, continuous_action_size = env.get_size()
 obs_shapes[1] = tuple(reversed(obs_shapes[1]))
@@ -186,6 +183,7 @@ i_episode = len(event_acc.Scalars("reward/train")) if args.resume is True else 1
 latest_avg_reward = (
     float(latest_file.split("_")[-1]) if args.resume is True else float("-inf")
 )
+MAX_EVAL_STEP = 200
 
 for i_episode in itertools.count(i_episode):
     episode_reward = 0
@@ -263,19 +261,21 @@ for i_episode in itertools.count(i_episode):
 
     if i_episode % 20 == 0 and args.eval is True:
         avg_reward = 0.0
-        episodes = 5
+        episodes = 3
         for _ in range(episodes):
             state = env.reset()
             episode_reward = 0
             done = False
-            while not done:
+            eval_step = 0
+            while not done and eval_step <= MAX_EVAL_STEP:
                 action = agent.select_action(state, evaluate=True)
                 if args.policy == "Gaussian":
                     next_state, reward, done, _ = env.step(None, action)  # Step
                 else:
                     next_state, reward, done, _ = env.step(action, None)  # Step
-                episode_reward += reward
+                episode_reward += reward[0]
                 state = next_state
+                eval_step += 1
             avg_reward += episode_reward
         avg_reward /= episodes
 
@@ -286,8 +286,10 @@ for i_episode in itertools.count(i_episode):
             "Test Episodes: {}, Avg. Reward: {}".format(episodes, round(avg_reward, 2))
         )
         print("----------------------------------------")
-        if latest_avg_reward < avg_reward or i_episode % 100 == 0:
-            agent.save_checkpoint(args.env_name, avg_reward)
+        if latest_avg_reward <= avg_reward or i_episode % 100 == 0:
+            agent.save_checkpoint(
+                args.env_name, avg_reward, os.path.dirname(os.path.abspath(__file__))
+            )
             if latest_avg_reward < avg_reward:
                 latest_avg_reward = avg_reward
 
