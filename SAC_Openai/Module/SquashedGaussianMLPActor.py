@@ -1,3 +1,4 @@
+from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,13 +15,36 @@ LOG_STD_MIN = -20
 class SquashedGaussianMLPActor(nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation, act_limit):
         super().__init__()
-        self.net = Utils.mlp([obs_dim] + list(hidden_sizes), activation, activation)
+        self.combine_layer = None
+        if isinstance(obs_dim, List):
+            for o in obs_dim:
+                o = np.array(o)
+                if len(o) == 3:
+                    self.covnet, self.covnet_fc = Utils.mlp_cov2d(
+                        o, list(hidden_sizes), activation, 0, activation
+                    )
+                else:
+                    self.linnet = Utils.mlp(
+                        [o[0]] + list(hidden_sizes), activation, activation
+                    )
+            self.combine_layer = nn.Linear(hidden_sizes[-1] * 2, hidden_sizes[-1])
+        else:
+            obs_dim = obs_dim.shape[0]
+            self.net = Utils.mlp([obs_dim] + list(hidden_sizes), activation, activation)
         self.mu_layer = nn.Linear(hidden_sizes[-1], act_dim)
         self.log_std_layer = nn.Linear(hidden_sizes[-1], act_dim)
         self.act_limit = act_limit
 
     def forward(self, obs, deterministic=False, with_logprob=True):
-        net_out = self.net(obs)
+        if not self.combine_layer is None:
+            o = obs[0] if (obs[0].shape == 4) else obs[1]
+            cov_out = self.covnet(o)
+            fc_out = self.covnet_fc(cov_out.view((cov_out.shape[0], -1)))
+            o = obs[0] if (obs[0].shape != 4) else obs[1]
+            lin_out = self.linnet(o)
+            net_out = self.combine_layer(torch.cat([fc_out, lin_out], dim=-1))
+        else:
+            net_out = self.net(obs)
         mu = self.mu_layer(net_out)
         log_std = self.log_std_layer(net_out)
         log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import List
 import numpy as np
 import itertools
 import time
@@ -140,14 +141,25 @@ class SAC:
                 p_targ.data.add_((1 - self.polyak) * p.data)
 
     def get_action(self, ac, o, deterministic=False):
-        return ac.act(torch.as_tensor(o, dtype=torch.float32), deterministic)
+        if isinstance(o, List):
+            o = [
+                torch.as_tensor(s, dtype=torch.float32).unsqueeze(0)
+                if len(s.shape) == 3
+                else torch.as_tensor(s, dtype=torch.float32)
+                for s in o
+            ]
+        else:
+            o = torch.as_tensor(o, dtype=torch.float32)
+        return ac.act(o, deterministic)
 
     def test_agent(self, ac, test_env):
         for j in range(self.num_test_episodes):
             o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
+            o = Utils.transpose(o)
             while not (d or (ep_len == self.max_ep_len)):
                 # Take deterministic actions at test time
                 o, r, d, _ = test_env.step(self.get_action(ac, o, True))
+                o = Utils.transpose(o)
                 ep_ret += r
                 ep_len += 1
             # logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
@@ -157,8 +169,9 @@ class SAC:
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
 
-        env, test_env = self.env_fn(), self.env_fn()
-        obs_dim = env.observation_space.shape
+        env = self.env_fn()
+        test_env = env
+        obs_dim = env.observation_space
         act_dim = env.action_space.shape[0]
 
         # Action limit for clamping: critically, assumes all dimensions share the same bound!
@@ -194,6 +207,7 @@ class SAC:
         total_steps = self.steps_per_epoch * self.epochs
         start_time = time.time()
         o, ep_ret, ep_len = env.reset(), 0, 0
+        o = Utils.transpose(o)
 
         # Main loop: collect experience in env and update/log each epoch
         for t in range(total_steps):
@@ -208,6 +222,7 @@ class SAC:
 
             # Step the env
             o2, r, d, _ = env.step(a)
+            o2 = Utils.transpose(o2)
             ep_ret += r
             ep_len += 1
 
@@ -225,8 +240,9 @@ class SAC:
 
             # End of trajectory handling
             if d or (ep_len == self.max_ep_len):
-                # logger.store(EpRet=ep_ret, EpLen=ep_len)
+                print("trajectory end, EpRet:{} EpLen:{}".format(ep_ret, ep_len))
                 o, ep_ret, ep_len = env.reset(), 0, 0
+                o = Utils.transpose(o)
 
             # Update handling
             if t >= self.update_after and t % self.update_every == 0:

@@ -15,7 +15,7 @@ class MLPActorCritic(nn.Module):
     ):
         super().__init__()
 
-        obs_dim = observation_space.shape[0]
+        obs_dim = observation_space
         act_dim = action_space.shape[0]
         act_limit = action_space.high[0]
 
