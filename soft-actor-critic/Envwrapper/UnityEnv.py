@@ -103,7 +103,6 @@ class UnityWrapper:
                     quality_level=5
                 )
                 break
-        obs_shapes[1] = tuple(reversed(obs_shapes[1]))
         return (
             obs_shapes,
             Box(-1, 1, (discrete_action_size,)),

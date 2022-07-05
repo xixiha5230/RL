@@ -3,11 +3,13 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 from Utils.utils import soft_update, hard_update
-from Modules.model import GaussianPolicy, QNetwork, DeterministicPolicy
+from Modules.model_ir import GaussianPolicy, QNetwork, DeterministicPolicy
 
 
 class SAC(object):
-    def __init__(self, num_inputs, action_space, args):
+    def __init__(self, obs_space, action_space, args):
+        assert obs_space[0] == (202,)
+        assert obs_space[1] == (128, 128, 4)
 
         self.gamma = args.gamma
         self.tau = args.tau
@@ -19,13 +21,13 @@ class SAC(object):
 
         self.device = torch.device("cuda" if args.cuda else "cpu")
 
-        self.critic = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(
+        self.critic = QNetwork(obs_space, action_space.shape[0], args.hidden_size).to(
             device=self.device
         )
         self.critic_optim = Adam(self.critic.parameters(), lr=args.lr)
 
         self.critic_target = QNetwork(
-            num_inputs, action_space.shape[0], args.hidden_size
+            obs_space, action_space.shape[0], args.hidden_size
         ).to(self.device)
         hard_update(self.critic_target, self.critic)
 
@@ -39,7 +41,7 @@ class SAC(object):
                 self.alpha_optim = Adam([self.log_alpha], lr=args.lr)
 
             self.policy = GaussianPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
+                obs_space, action_space.shape[0], args.hidden_size, action_space
             ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
@@ -47,7 +49,7 @@ class SAC(object):
             self.alpha = 0
             self.automatic_entropy_tuning = False
             self.policy = DeterministicPolicy(
-                num_inputs, action_space.shape[0], args.hidden_size, action_space
+                obs_space, action_space.shape[0], args.hidden_size, action_space
             ).to(self.device)
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 

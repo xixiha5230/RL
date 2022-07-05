@@ -5,7 +5,7 @@ import gym
 import numpy as np
 import itertools
 import torch
-from Algorithm.sac import SAC
+from Algorithm.sac_ir import SAC
 from tensorboardX import SummaryWriter
 from Memory.replay_memory import ReplayMemory
 from Envwrapper.UnityEnv import UnityWrapper
@@ -130,7 +130,7 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 # Agent
-agent = SAC(env.observation_space.shape[0], env.action_space, args)
+agent = SAC(env.observation_space, env.action_space, args)
 
 # Tesnorboard
 writer = SummaryWriter(
