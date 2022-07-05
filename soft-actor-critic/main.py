@@ -1,21 +1,18 @@
 import argparse
-import os
-import glob
 import datetime
+import gym
 import numpy as np
 import itertools
 import torch
-from torch.utils.tensorboard import SummaryWriter
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-from Memory.replay_memory import ReplayMemory
 from Algorithm.sac import SAC
-from Envwrapper.UnityEnv import UnityWrapper
+from torch.utils.tensorboard import SummaryWriter
+from Memory.replay_memory import ReplayMemory
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
     "--env-name",
     default="LunarLander-v2",
-    help="Mujoco Gym environment (default: LunarLander-v2)",
+    help="Mujoco Gym environment (default: HalfCheetah-v2)",
 )
 parser.add_argument(
     "--policy",
@@ -91,121 +88,72 @@ parser.add_argument(
 parser.add_argument(
     "--updates_per_step",
     type=int,
-    default=5,
+    default=1,
     metavar="N",
     help="model updates per simulator step (default: 1)",
 )
 parser.add_argument(
     "--start_steps",
     type=int,
-    default=1024,
+    default=10000,
     metavar="N",
     help="Steps sampling random actions (default: 10000)",
 )
 parser.add_argument(
     "--target_update_interval",
     type=int,
-    default=5,
+    default=1,
     metavar="N",
     help="Value target update per no. of updates per step (default: 1)",
 )
 parser.add_argument(
     "--replay_size",
     type=int,
-    default=50000,
+    default=1000000,
     metavar="N",
     help="size of replay buffer (default: 10000000)",
 )
-parser.add_argument(
-    "--resume", type=bool, default=False, help="Resume training (default: False)"
-)
-parser.add_argument(
-    "--cuda", type=bool, default=True, help="Resume on GPU (default: False)"
-)
+parser.add_argument("--cuda", action="store_true", help="run on CUDA (default: False)")
 args = parser.parse_args()
 
-# Seed
+# Environment
+# env = NormalizedActions(gym.make(args.env_name))
+env = gym.make(args.env_name, continuous=True)
+env.seed(args.seed)
+env.action_space.seed(args.seed)
+
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
-# Environment
-# env = gym.make(args.env_name, continuous=(args.policy == "Gaussian"))
-file_name = "venv_605/"
-env = UnityWrapper(
-    train_mode=True, file_name=file_name, no_graphics=False, seed=args.seed
-)
-obs_shapes, discrete_action_size, continuous_action_size = env.get_size()
-obs_shapes[1] = tuple(reversed(obs_shapes[1]))
 # Agent
-if args.policy == "Gaussian":
-    agent = SAC(obs_shapes, continuous_action_size, args)
-else:
-    agent = SAC(obs_shapes, discrete_action_size, args)
-
-if args.resume is True:
-    list_of_files = glob.glob(
-        os.path.dirname(os.path.abspath(__file__))
-        + "/checkpoints/"
-        + args.env_name
-        + "/*"
-    )
-    latest_file = max(list_of_files, key=os.path.getctime)
-    print("Resume training load: ", latest_file)
-    agent.load_checkpoint(latest_file)
+agent = SAC(env.observation_space.shape[0], env.action_space, args)
 
 # Tesnorboard
-if args.resume is True:
-    files = glob.glob(
-        os.path.dirname(os.path.abspath(__file__)) + "/runs/" + args.env_name + "/*"
+writer = SummaryWriter(
+    "runs/{}_SAC_{}_{}_{}".format(
+        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+        args.env_name,
+        args.policy,
+        "autotune" if args.automatic_entropy_tuning else "",
     )
-    path = max(files, key=os.path.getctime)
-    writer = SummaryWriter(path)
-    event_acc = EventAccumulator(path, size_guidance={"scalars": 0})
-    event_acc.Reload()
-else:
-    writer = SummaryWriter(
-        os.path.dirname(os.path.abspath(__file__))
-        + "/runs/{}/{}_SAC_{}_{}".format(
-            args.env_name,
-            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
-            args.policy,
-            "autotune" if args.automatic_entropy_tuning else "",
-        )
-    )
+)
 
 # Memory
 memory = ReplayMemory(args.replay_size, args.seed)
 
 # Training Loop
 total_numsteps = 0
-updates = len(event_acc.Scalars("loss/policy")) if args.resume is True else 0
-i_episode = len(event_acc.Scalars("reward/train")) if args.resume is True else 1
-latest_avg_reward = (
-    float(latest_file.split("_")[-1]) if args.resume is True else float("-inf")
-)
-MAX_EVAL_STEP = 200
+updates = 0
 
-for i_episode in itertools.count(i_episode):
+for i_episode in itertools.count(1):
     episode_reward = 0
     episode_steps = 0
     done = False
     state = env.reset()
 
     while not done:
-        if args.start_steps > total_numsteps and not args.resume is True:
-            # action = env.action_space.sample()  # Sample random action
-            if args.policy == "Gaussian":
-                action = (
-                    torch.distributions.Uniform(-1, 1)
-                    .sample((1, continuous_action_size))
-                    .numpy()
-                )
-            else:
-                action = (
-                    torch.distributions.Uniform(-1, 1)
-                    .sample((1, discrete_action_size))
-                    .numpy()
-                )
+        if args.start_steps > total_numsteps:
+            action = env.action_space.sample()  # Sample random action
         else:
             action = agent.select_action(state)  # Sample action from policy
 
@@ -228,20 +176,14 @@ for i_episode in itertools.count(i_episode):
                 writer.add_scalar("entropy_temprature/alpha", alpha, updates)
                 updates += 1
 
-        if args.policy == "Gaussian":
-            next_state, reward, done, max_episode_steps = env.step(None, action)  # Step
-        else:
-            next_state, reward, done, max_episode_steps = env.step(action, None)  # Step
-        reward = reward[0]
-        done = done[0]
-        max_episode_steps = max_episode_steps[0]
+        next_state, reward, done, _ = env.step(action)  # Step
         episode_steps += 1
         total_numsteps += 1
         episode_reward += reward
 
         # Ignore the "done" signal if it comes from hitting the time horizon.
         # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
-        mask = 1 if max_episode_steps else float(not done)
+        mask = 1 if episode_steps == env._max_episode_steps else float(not done)
 
         memory.push(
             state, action, reward, next_state, mask
@@ -259,23 +201,20 @@ for i_episode in itertools.count(i_episode):
         )
     )
 
-    if i_episode % 20 == 0 and args.eval is True:
+    if i_episode % 10 == 0 and args.eval is True:
         avg_reward = 0.0
-        episodes = 3
+        episodes = 10
         for _ in range(episodes):
             state = env.reset()
             episode_reward = 0
             done = False
-            eval_step = 0
-            while not done and eval_step <= MAX_EVAL_STEP:
+            while not done:
                 action = agent.select_action(state, evaluate=True)
-                if args.policy == "Gaussian":
-                    next_state, reward, done, _ = env.step(None, action)  # Step
-                else:
-                    next_state, reward, done, _ = env.step(action, None)  # Step
-                episode_reward += reward[0]
+
+                next_state, reward, done, _ = env.step(action)
+                episode_reward += reward
+
                 state = next_state
-                eval_step += 1
             avg_reward += episode_reward
         avg_reward /= episodes
 
@@ -286,11 +225,5 @@ for i_episode in itertools.count(i_episode):
             "Test Episodes: {}, Avg. Reward: {}".format(episodes, round(avg_reward, 2))
         )
         print("----------------------------------------")
-        if latest_avg_reward <= avg_reward or i_episode % 100 == 0:
-            agent.save_checkpoint(
-                args.env_name, avg_reward, os.path.dirname(os.path.abspath(__file__))
-            )
-            if latest_avg_reward < avg_reward:
-                latest_avg_reward = avg_reward
 
 env.close()
