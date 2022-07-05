@@ -1,4 +1,5 @@
 import argparse
+from cmath import inf
 import datetime
 import gym
 import numpy as np
@@ -130,9 +131,9 @@ agent = SAC(env.observation_space.shape[0], env.action_space, args)
 
 # Tesnorboard
 writer = SummaryWriter(
-    "runs/{}_SAC_{}_{}_{}".format(
-        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+    "result/{}/SAC_{}_{}_{}".format(
         args.env_name,
+        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         args.policy,
         "autotune" if args.automatic_entropy_tuning else "",
     )
@@ -144,7 +145,7 @@ memory = ReplayMemory(args.replay_size, args.seed)
 # Training Loop
 total_numsteps = 0
 updates = 0
-
+last_avg_reward = -inf
 for i_episode in itertools.count(1):
     episode_reward = 0
     episode_steps = 0
@@ -225,5 +226,8 @@ for i_episode in itertools.count(1):
             "Test Episodes: {}, Avg. Reward: {}".format(episodes, round(avg_reward, 2))
         )
         print("----------------------------------------")
-
+        if avg_reward >= last_avg_reward or i_episode % 3 == 0:
+            agent.save_checkpoint(args.env_name, str(round(avg_reward, 2)))
+            if avg_reward > last_avg_reward:
+                last_avg_reward = avg_reward
 env.close()
