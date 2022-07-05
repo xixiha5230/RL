@@ -8,11 +8,12 @@ import torch
 from Algorithm.sac import SAC
 from tensorboardX import SummaryWriter
 from Memory.replay_memory import ReplayMemory
+from Envwrapper.UnityEnv import UnityWrapper
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
     "--env-name",
-    default="LunarLander-v2",
+    default="Unnity_605",
     help="Mujoco Gym environment (default: LunarLander-v2)",
 )
 parser.add_argument(
@@ -119,7 +120,10 @@ args = parser.parse_args()
 
 # Environment
 # env = NormalizedActions(gym.make(args.env_name))
-env = gym.make(args.env_name, continuous=True)
+# env = gym.make(args.env_name, continuous=True)
+env = UnityWrapper(
+    train_mode=True, file_name="venv_605/", no_graphics=True, seed=args.seed
+)
 env.action_space.seed(args.seed)
 
 torch.manual_seed(args.seed)
