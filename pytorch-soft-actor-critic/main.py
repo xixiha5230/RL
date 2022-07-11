@@ -5,7 +5,7 @@ import numpy as np
 import itertools
 import torch
 from Algorithm.SAC import SAC
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 from Memory.ReplayMemory import ReplayMemory
 
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
@@ -119,22 +119,23 @@ args = parser.parse_args()
 # Environment
 # env = NormalizedActions(gym.make(args.env_name))
 env = gym.make(args.env_name, continuous=True)
-env.seed(args.seed)
+env.reset(seed=args.seed)
 env.action_space.seed(args.seed)
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
+torch.set_num_threads(torch.get_num_threads())
 
 # Agent
 agent = SAC(env.observation_space.shape[0], env.action_space, args)
 
 # Tesnorboard
 writer = SummaryWriter(
-    "runs/{}_SAC_{}_{}_{}".format(
-        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+    "result/{}/{}_SAC_{}{}".format(
         args.env_name,
+        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
         args.policy,
-        "autotune" if args.automatic_entropy_tuning else "",
+        "_autotune" if args.automatic_entropy_tuning else "",
     )
 )
 
@@ -144,6 +145,7 @@ memory = ReplayMemory(args.replay_size, args.seed)
 # Training Loop
 total_numsteps = 0
 updates = 0
+latest_avg_reward = float("-inf")
 
 for i_episode in itertools.count(1):
     episode_reward = 0
@@ -225,5 +227,10 @@ for i_episode in itertools.count(1):
             "Test Episodes: {}, Avg. Reward: {}".format(episodes, round(avg_reward, 2))
         )
         print("----------------------------------------")
+
+        if latest_avg_reward <= avg_reward or i_episode % 100 == 0:
+            agent.save_checkpoint(args.env_name, str(round(avg_reward, 2)) + ".ckpt")
+            if latest_avg_reward < avg_reward:
+                latest_avg_reward = avg_reward
 
 env.close()

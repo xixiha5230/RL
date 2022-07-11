@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn.functional as F
 from torch.optim import Adam
-from utils import soft_update, hard_update
+from .utils import soft_update, hard_update
 from Network.Model import GaussianPolicy, QNetwork, DeterministicPolicy
 
 
@@ -143,10 +143,10 @@ class SAC(object):
 
     # Save model parameters
     def save_checkpoint(self, env_name, suffix="", ckpt_path=None):
-        if not os.path.exists("checkpoints/"):
-            os.makedirs("checkpoints/")
+        if not os.path.exists("result/{}/checkpoints/".format(env_name)):
+            os.makedirs("result/{}/checkpoints/".format(env_name))
         if ckpt_path is None:
-            ckpt_path = "checkpoints/sac_checkpoint_{}_{}".format(env_name, suffix)
+            ckpt_path = "result/{}/checkpoints/{}".format(env_name, suffix)
         print("Saving models to {}".format(ckpt_path))
         torch.save(
             {
