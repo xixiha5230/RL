@@ -32,6 +32,7 @@ class UnityWrapper(UnityToGymWrapper):
             num_areas,
         )
         super().__init__(u_env, allow_multiple_obs=True, action_space_seed=seed)
+        self._max_episode_steps = 500
 
     def reset(self, seed=0) -> Union[List[np.ndarray], np.ndarray]:
         return super().reset()
@@ -44,5 +45,5 @@ if __name__ == "__main__":
     )
     env.reset(0)
     a = env.reset()
-    
+
     print(a)

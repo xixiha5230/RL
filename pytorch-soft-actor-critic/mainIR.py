@@ -4,7 +4,7 @@ import gym
 import numpy as np
 import itertools
 import torch
-from Algorithm.SAC import SAC
+from Algorithm.SACIR import SACIR
 from tensorboardX import SummaryWriter
 from Memory.ReplayMemoryIR import ReplayMemoryIR
 from Envwrapper.UnityEnv import UnityWrapper
@@ -114,7 +114,9 @@ parser.add_argument(
     metavar="N",
     help="size of replay buffer (default: 10000000)",
 )
-parser.add_argument("--cuda", action="store_true", help="run on CUDA (default: False)")
+parser.add_argument(
+    "--cuda", type=bool, default=True, help="run on CUDA (default: False)"
+)
 args = parser.parse_args()
 
 # Environment
@@ -129,7 +131,7 @@ np.random.seed(args.seed)
 torch.set_num_threads(torch.get_num_threads())
 
 # Agent
-agent = SAC(env.observation_space.shape[0], env.action_space, args)
+agent = SACIR(env.observation_space, env.action_space, args)
 
 # Tesnorboard
 writer = SummaryWriter(
@@ -142,7 +144,7 @@ writer = SummaryWriter(
 )
 
 # Memory
-memory = ReplayMemory(args.replay_size, args.seed)
+memory = ReplayMemoryIR(args.replay_size, args.seed)
 
 # Training Loop
 total_numsteps = 0
