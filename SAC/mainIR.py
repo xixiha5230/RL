@@ -11,7 +11,7 @@ from Envwrapper.UnityEnv import UnityWrapper
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
     "--env-name",
-    default="venv_605",
+    default="venv_605_easy",
     help="Mujoco Gym environment (default: HalfCheetah-v2)",
 )
 parser.add_argument(

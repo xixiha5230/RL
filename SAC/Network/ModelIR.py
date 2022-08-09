@@ -82,36 +82,47 @@ class Conv1d(nn.Module):
         return x
 
 
-class QNetworkIR(nn.Module):
-    def __init__(self, obs_shape, num_actions, hidden_dim=64):
-        assert obs_shape[0].shape == (84, 84, 4)
+class StateNetwork(nn.Module):
+    def __init__(self, obs_shape, hidden_dim=64, out_dim=64):
+        assert obs_shape[0].shape == (84, 84, 3)
         assert obs_shape[1].shape == (202,)
-        super(QNetworkIR, self).__init__()
+        super(StateNetwork, self).__init__()
+        self.conv2d = Conv2d(obs_shape[0].shape[-1], 256, 64)
+        self.conv1d = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
+        self.fc_ir = nn.Sequential(
+            nn.Linear(64 + 64, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
+            nn.ReLU(),
+        )
 
-        # Q1 architecture
-        self.conv2d_1 = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d_1 = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir_1 = nn.Sequential(nn.Linear(64 + 64, 64), nn.ReLU())
-        self.q_1 = Linear(64 + num_actions, hidden_dim, 1)
-
-        # Q2 architecture
-        self.conv2d_2 = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d_2 = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir_2 = nn.Sequential(nn.Linear(64 + 64, 64), nn.ReLU())
-        self.q_2 = Linear(64 + num_actions, hidden_dim, 1)
-
-    def forward(self, state, action):
+    def forward(self, state):
         img_batch = state[0]
         ray_batch = state[1]
 
-        img_1 = self.conv2d_1(img_batch)
-        ray_1 = self.conv1d_1(ray_batch)
-        fc_1 = self.fc_ir_1(torch.cat([img_1, ray_1], dim=-1))
+        img = self.conv2d(img_batch)
+        ray = self.conv1d(ray_batch)
+        state = self.fc_ir(torch.cat([img, ray], dim=-1))
+        return state
+
+
+class QNetworkIR(nn.Module):
+    def __init__(self, obs_shape, num_actions, hidden_dim=64):
+        super(QNetworkIR, self).__init__()
+
+        # Q1 architecture
+        self.state_net_1 = StateNetwork(obs_shape, hidden_dim, 64)
+        self.q_1 = Linear(64 + num_actions, hidden_dim, 1)
+
+        # Q2 architecture
+        self.state_net_2 = StateNetwork(obs_shape, hidden_dim, 64)
+        self.q_2 = Linear(64 + num_actions, hidden_dim, 1)
+
+    def forward(self, state, action):
+        fc_1 = self.state_net_1(state)
         q_1 = self.q_1(torch.cat([fc_1, action], dim=-1))
 
-        img_2 = self.conv2d_2(img_batch)
-        ray_2 = self.conv1d_2(ray_batch)
-        fc_2 = self.fc_ir_2(torch.cat([img_2, ray_2], dim=-1))
+        fc_2 = self.state_net_2(state)
         q_2 = self.q_2(torch.cat([fc_2, action], dim=-1))
 
         return q_1, q_2
@@ -124,19 +135,10 @@ epsilon = 1e-6
 
 class GaussianPolicyIR(GaussianPolicy):
     def __init__(self, obs_shape, num_actions, hidden_dim=64, action_space=None):
-        super(GaussianPolicyIR, self).__init__(2, 2, 2)
-
-        self.conv2d = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir = nn.Sequential(
-            nn.Linear(64 + 64, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
-
-        self.mean_linear = nn.Linear(hidden_dim, num_actions)
-        self.log_std_linear = nn.Linear(hidden_dim, num_actions)
+        super(GaussianPolicyIR, self).__init__()
+        self.state_net = StateNetwork(obs_shape, hidden_dim, 64)
+        self.mean_linear = Linear(64, hidden_dim, num_actions)
+        self.log_std_linear = Linear(64, hidden_dim, num_actions)
 
         # action rescaling
         if action_space is None:
@@ -151,15 +153,7 @@ class GaussianPolicyIR(GaussianPolicy):
             )
 
     def forward(self, state):
-        img_batch = state[0]
-        ray_batch = state[1]
-
-        img = self.conv2d(img_batch)
-        ray = self.conv1d(ray_batch)
-        fc = self.fc_ir(torch.cat([img, ray], dim=-1))
-
-        # x = F.relu(self.linear1(state))
-        # x = F.relu(self.linear2(x))
+        fc = self.state_net(state)
         mean = self.mean_linear(fc)
         log_std = self.log_std_linear(fc)
         log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
