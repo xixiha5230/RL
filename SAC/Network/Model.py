@@ -9,7 +9,7 @@ epsilon = 1e-6
 
 # Initialize Policy weights
 def weights_init_(m):
-    if isinstance(m, nn.Linear):
+    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv1d) or isinstance(m, nn.Conv2d):
         torch.nn.init.xavier_uniform_(m.weight, gain=1)
         torch.nn.init.constant_(m.bias, 0)
 
@@ -62,7 +62,7 @@ class QNetwork(nn.Module):
 
 
 class GaussianPolicy(nn.Module):
-    def __init__(self, num_inputs=1, num_actions=1, hidden_dim=1, action_space=None):
+    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
         super(GaussianPolicy, self).__init__()
 
         self.linear1 = nn.Linear(num_inputs, hidden_dim)

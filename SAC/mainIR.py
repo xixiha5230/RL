@@ -56,7 +56,7 @@ parser.add_argument(
 parser.add_argument(
     "--alpha",
     type=float,
-    default=0.2,
+    default=0.1,
     metavar="G",
     help="Temperature parameter α determines the relative importance of the entropy\
                             term against the reward (default: 0.2)",
@@ -107,6 +107,20 @@ parser.add_argument(
     help="Steps sampling random actions (default: 10000)",
 )
 parser.add_argument(
+    "--eval_per_steps",
+    type=int,
+    default=50,
+    metavar="N",
+    help="Steps eval reward(default: 100)",
+)
+parser.add_argument(
+    "--eval_times",
+    type=int,
+    default=5,
+    metavar="N",
+    help="episode per eval(default: 5)",
+)
+parser.add_argument(
     "--target_update_interval",
     type=int,
     default=1,
@@ -116,7 +130,7 @@ parser.add_argument(
 parser.add_argument(
     "--replay_size",
     type=int,
-    default=100000,
+    default=1000000,
     metavar="N",
     help="size of replay buffer (default: 10000000)",
 )
@@ -213,9 +227,9 @@ for i_episode in itertools.count(1):
         )
     )
 
-    if i_episode % args.eval_per_episode == 0 and args.eval is True:
+    if i_episode % 10 == 0 and args.eval is True:
         avg_reward = 0.0
-        episodes = 10
+        episodes = args.eval_times
         for _ in range(episodes):
             state = env.reset()
             episode_reward = 0
