@@ -1,7 +1,8 @@
+from ctypes import Union
 import torch
 import torch.nn as nn
-from torch.distributions import Normal
-from Network.Model import GaussianPolicy
+from typing import Tuple, Union
+from Network.Model import GaussianPolicy, weights_init_
 
 
 def conv1d_output_size(
@@ -17,6 +18,37 @@ def conv1d_output_size(
         ((length + (2 * padding) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
     )
     return l_out
+
+
+def conv2d_output_shape(
+    h_w: Tuple[int, int],
+    kernel_size: Union[int, Tuple[int, int]] = 1,
+    stride: int = 1,
+    padding: int = 0,
+    dilation: int = 1,
+) -> Tuple[int, int]:
+    """
+    Calculates the output shape (height and width) of the output of a convolution layer.
+    kernel_size, stride, padding and dilation correspond to the inputs of the
+    torch.nn.Conv2d layer (https://pytorch.org/docs/stable/generated/torch.nn.Conv2d.html)
+    :param h_w: The height and width of the input.
+    :param kernel_size: The size of the kernel of the convolution (can be an int or a
+    tuple [width, height])
+    :param stride: The stride of the convolution
+    :param padding: The padding of the convolution
+    :param dilation: The dilation of the convolution
+    """
+    from math import floor
+
+    if not isinstance(kernel_size, tuple):
+        kernel_size = (int(kernel_size), int(kernel_size))
+    h = floor(
+        ((h_w[0] + (2 * padding) - (dilation * (kernel_size[0] - 1)) - 1) / stride) + 1
+    )
+    w = floor(
+        ((h_w[1] + (2 * padding) - (dilation * (kernel_size[1] - 1)) - 1) / stride) + 1
+    )
+    return h, w
 
 
 class Linear(nn.Module):
@@ -36,24 +68,32 @@ class Linear(nn.Module):
 
 
 class Conv2d(nn.Module):
-    def __init__(self, channel, hidden_dim, out_dim):
+    def __init__(self, shape, hidden_dim, out_dim):
         super(Conv2d, self).__init__()
-
+        conv_1_hw = conv2d_output_shape((shape[0], shape[1]), 8, 4)
+        conv_2_hw = conv2d_output_shape(conv_1_hw, 4, 2)
+        conv_3_hw = conv2d_output_shape(conv_2_hw, 3, 1)
         self.conv = nn.Sequential(
-            nn.Conv2d(channel, 32, [8, 8], [4, 4]),
-            nn.MaxPool2d(2, 2),
+            nn.Conv2d(shape[2], 32, [8, 8], [4, 4]),
+            nn.LeakyReLU(),
             nn.Conv2d(32, 64, [4, 4], [2, 2]),
             nn.LeakyReLU(),
-            nn.AdaptiveMaxPool2d((8, 8)),
+            nn.Conv2d(64, 64, [3, 3], [1, 1]),
+            nn.LeakyReLU(),
         )
-        self.fc_input = 8 * 8 * 64
-        self.fc = Linear(self.fc_input, hidden_dim, out_dim)
+        self.fc_w = 64 * conv_3_hw[0] * conv_3_hw[1]
+        self.fc = nn.Sequential(
+            nn.Linear(self.fc_w, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
+            nn.ReLU(),
+        )
 
     # shape(1,84,84,4)
     def forward(self, x: torch.Tensor):
         x = x.permute(0, 3, 1, 2)
         x = self.conv(x)
-        x = x.reshape(x.shape[0], self.fc_input)
+        x = x.reshape(x.shape[0], self.fc_w)
         x = self.fc(x)
         return x
 
@@ -71,7 +111,7 @@ class Conv1d(nn.Module):
             nn.LeakyReLU(),
         )
         self.fc_input = conv_2_l * 32
-        self.fc = Linear(self.fc_input, hidden_dim, out_dim)
+        self.fc = nn.Sequential(nn.Linear(self.fc_input, out_dim), nn.ReLU())
 
     def forward(self, x: torch.Tensor):
         batch = x.shape[-2]
@@ -82,38 +122,42 @@ class Conv1d(nn.Module):
         return x
 
 
-class QNetworkIR(nn.Module):
-    def __init__(self, obs_shape, num_actions, hidden_dim=64):
+class StateNetwork(nn.Module):
+    def __init__(self, obs_shape, hidden_dim=256, out_dim=64):
         assert obs_shape[0].shape == (84, 84, 4)
         assert obs_shape[1].shape == (202,)
-        super(QNetworkIR, self).__init__()
+        super(StateNetwork, self).__init__()
 
-        # Q1 architecture
-        self.conv2d_1 = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d_1 = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir_1 = nn.Sequential(nn.Linear(64 + 64, 64), nn.ReLU())
-        self.q_1 = Linear(64 + num_actions, hidden_dim, 1)
+        self.conv2d = Conv2d(obs_shape[0].shape, hidden_dim, 64)
+        self.conv1d = Conv1d(obs_shape[1].shape[-1] // 2, 2, hidden_dim, 64)
+        self.fc_ir = nn.Sequential(nn.Linear(64 + 64, out_dim), nn.ReLU())
+        self.apply(weights_init_)
 
-        # Q2 architecture
-        self.conv2d_2 = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d_2 = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir_2 = nn.Sequential(nn.Linear(64 + 64, 64), nn.ReLU())
-        self.q_2 = Linear(64 + num_actions, hidden_dim, 1)
-
-    def forward(self, state, action):
+    def forward(self, state):
         img_batch = state[0]
         ray_batch = state[1]
 
-        img_1 = self.conv2d_1(img_batch)
-        ray_1 = self.conv1d_1(ray_batch)
-        fc_1 = self.fc_ir_1(torch.cat([img_1, ray_1], dim=-1))
-        q_1 = self.q_1(torch.cat([fc_1, action], dim=-1))
+        img = self.conv2d(img_batch)
+        ray = self.conv1d(ray_batch)
+        fc = self.fc_ir(torch.cat([img, ray], dim=-1))
+        return fc
 
-        img_2 = self.conv2d_2(img_batch)
-        ray_2 = self.conv1d_2(ray_batch)
-        fc_2 = self.fc_ir_2(torch.cat([img_2, ray_2], dim=-1))
-        q_2 = self.q_2(torch.cat([fc_2, action], dim=-1))
 
+class QNetworkIR(nn.Module):
+    def __init__(self, obs_shape, num_actions, hidden_dim=256):
+        super(QNetworkIR, self).__init__()
+        self.state = StateNetwork(obs_shape, 256, 64)
+        # Q1 architecture
+        self.q_1 = Linear(64 + num_actions, hidden_dim, 1)
+        # Q2 architecture
+        self.q_2 = Linear(64 + num_actions, hidden_dim, 1)
+        self.apply(weights_init_)
+
+    def forward(self, state, action):
+        state = self.state(state)
+        xu = torch.cat([state, action], dim=-1)
+        q_1 = self.q_1(xu)
+        q_2 = self.q_2(xu)
         return q_1, q_2
 
 
@@ -123,21 +167,11 @@ epsilon = 1e-6
 
 
 class GaussianPolicyIR(GaussianPolicy):
-    def __init__(self, obs_shape, num_actions, hidden_dim=64, action_space=None):
-        super(GaussianPolicyIR, self).__init__(2, 2, 2)
-
-        self.conv2d = Conv2d(obs_shape[0].shape[-1], 256, 64)
-        self.conv1d = Conv1d(obs_shape[1].shape[-1] // 2, 2, 256, 64)
-        self.fc_ir = nn.Sequential(
-            nn.Linear(64 + 64, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
-
-        self.mean_linear = nn.Linear(hidden_dim, num_actions)
-        self.log_std_linear = nn.Linear(hidden_dim, num_actions)
-
+    def __init__(self, obs_shape, num_actions, hidden_dim=256, action_space=None):
+        super(GaussianPolicyIR, self).__init__()
+        self.state = StateNetwork(obs_shape, 256, 64)
+        self.mean_linear = Linear(64, hidden_dim, num_actions)
+        self.log_std_linear = Linear(64, hidden_dim, num_actions)
         # action rescaling
         if action_space is None:
             self.action_scale = torch.tensor(1.0)
@@ -149,19 +183,12 @@ class GaussianPolicyIR(GaussianPolicy):
             self.action_bias = torch.FloatTensor(
                 (action_space.high + action_space.low) / 2.0
             )
+        self.apply(weights_init_)
 
     def forward(self, state):
-        img_batch = state[0]
-        ray_batch = state[1]
-
-        img = self.conv2d(img_batch)
-        ray = self.conv1d(ray_batch)
-        fc = self.fc_ir(torch.cat([img, ray], dim=-1))
-
-        # x = F.relu(self.linear1(state))
-        # x = F.relu(self.linear2(x))
-        mean = self.mean_linear(fc)
-        log_std = self.log_std_linear(fc)
+        state = self.state(state)
+        mean = self.mean_linear(state)
+        log_std = self.log_std_linear(state)
         log_std = torch.clamp(log_std, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
         return mean, log_std
 

@@ -9,7 +9,7 @@ from Envwrapper.UnityEnv import UnityWrapper
 parser = argparse.ArgumentParser(description="PyTorch Soft Actor-Critic Args")
 parser.add_argument(
     "--env-name",
-    default="venv_605",
+    default="venv_605_easy",
     help="Mujoco Gym environment (default: LunarLander-v2)",
 )
 parser.add_argument(
@@ -123,7 +123,7 @@ env.action_space.seed(args.seed)
 agent = SACIR(env.observation_space, env.action_space, args)
 list_of_files = glob.glob("result/{}/checkpoints/*".format(args.env_name))
 # latest_file = max(list_of_files, key=os.path.getctime)
-latest_file = "result/{}/checkpoints/19.64.ckpt".format(args.env_name)
+latest_file = "result/{}/checkpoints/10.0.ckpt".format(args.env_name)
 
 print("Test on : ", latest_file)
 agent.load_checkpoint(latest_file)

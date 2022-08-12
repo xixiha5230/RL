@@ -47,7 +47,7 @@ class SACIR(SAC):
             self.policy_optim = Adam(self.policy.parameters(), lr=args.lr)
 
         else:
-            assert self.policy_type == "Gaussian" "no implement"
+            assert self.policy_type == "Gaussian" "no implement DeterministicPolicy"
             self.alpha = 0
             self.automatic_entropy_tuning = False
             self.policy = DeterministicPolicy(
