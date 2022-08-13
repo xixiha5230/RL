@@ -1,6 +1,5 @@
 import argparse
 import datetime
-import gym
 import numpy as np
 import itertools
 import torch
@@ -25,6 +24,13 @@ parser.add_argument(
     type=bool,
     default=True,
     help="Evaluates a policy a policy every 10 episode (default: True)",
+)
+parser.add_argument(
+    "--eval_per_episode",
+    type=int,
+    default=100,
+    metavar="N",
+    help="eval per 10 episode (default: 10)",
 )
 parser.add_argument(
     "--gamma",
@@ -124,7 +130,7 @@ parser.add_argument(
 parser.add_argument(
     "--replay_size",
     type=int,
-    default=200000,
+    default=1000000,
     metavar="N",
     help="size of replay buffer (default: 10000000)",
 )
@@ -221,7 +227,7 @@ for i_episode in itertools.count(1):
         )
     )
 
-    if i_episode % args.eval_per_steps == 0 and args.eval is True:
+    if i_episode % 10 == 0 and args.eval is True:
         avg_reward = 0.0
         episodes = args.eval_times
         for _ in range(episodes):

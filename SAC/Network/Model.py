@@ -62,7 +62,7 @@ class QNetwork(nn.Module):
 
 
 class GaussianPolicy(nn.Module):
-    def __init__(self, num_inputs=2, num_actions=2, hidden_dim=2, action_space=None):
+    def __init__(self, num_inputs, num_actions, hidden_dim, action_space=None):
         super(GaussianPolicy, self).__init__()
 
         self.linear1 = nn.Linear(num_inputs, hidden_dim)
