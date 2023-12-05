@@ -9,7 +9,7 @@ decorator==5.1.0
 docker-pycreds==0.4.0
 entrypoints==0.3
 gitdb==4.0.9
-GitPython==3.1.24
+GitPython==3.1.37
 gym==0.21.0
 idna==3.3
 ipykernel==6.6.0
